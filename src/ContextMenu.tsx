@@ -15,7 +15,11 @@ interface Props {
 export type { ObjectType }
 
 const MENU_W = 170
-const ITEM_H = 28
+const ITEM_H = 32
+const HEADER_H = 22
+const LV0_FIRST = 30  // level 0: top → first item (4pad + 22header + 4gap)
+const LVN_FIRST = 4   // level N: top → first item (4pad, no header)
+const GAP = 8
 
 interface MenuNode {
   label: string
@@ -26,9 +30,13 @@ interface MenuNode {
 export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onClose, isDark }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<number | null>(null)
-  const [stack, setStack] = useState<number[]>([])
+  const leaveTimerRef = useRef<number | null>(null)
 
-  // Track which levels have been revealed (for opacity fade-in on mount)
+  // openStack controls which submenus are VISIBLE (set by click)
+  const [openStack, setOpenStack] = useState<number[]>([])
+  // hovered tracks which item is highlighted per depth (mouse enter/leave)
+  const [hovered, setHovered] = useState<number[]>([])
+
   const [revealed, setRevealed] = useState<Set<number>>(new Set([0]))
   const prevLenRef = useRef(1)
 
@@ -51,6 +59,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     },
   ]
 
+  // Close on click outside
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) onClose()
@@ -60,7 +69,10 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   }, [onClose])
 
   useEffect(() => {
-    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+    }
   }, [])
 
   const bg = isDark ? '#1e1e1e' : '#ffffff'
@@ -69,22 +81,25 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   const hoverBg = isDark ? '#333' : '#f0f0f0'
   const secColor = isDark ? '#888' : '#999'
 
+  // ─── Resolve tree levels from openStack ───
   function getLevel(depth: number): { items: MenuNode[]; sel: number | null } | null {
     let items: MenuNode[] = tree
     for (let i = 0; i < depth; i++) {
-      const idx = stack[i]
+      const idx = openStack[i]
       if (idx == null || idx < 0 || idx >= items.length) return null
       const node = items[idx]
       if (!node.children) return null
       items = node.children
     }
-    return { items, sel: depth < stack.length ? stack[depth] : null }
+    // For highlight: use hovered[depth] if set, else openStack[depth]
+    const selIdx = depth < hovered.length ? hovered[depth] : (depth < openStack.length ? openStack[depth] : null)
+    return { items, sel: selIdx }
   }
 
   function countLevels(): number {
     let items: MenuNode[] = tree
     for (let i = 0; ; i++) {
-      const idx = stack[i]
+      const idx = openStack[i]
       if (idx == null || idx < 0 || idx >= items.length) return i + 1
       const node = items[idx]
       if (!node.children) return i + 1
@@ -99,7 +114,54 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     if (info) levels.push({ depth: d, ...info })
   }
 
-  // Reveal new levels on next frame so CSS opacity transition runs
+  // ─── Position ───
+  function levelHeight(d: number, items: MenuNode[]): number {
+    return GAP + (d === 0 ? HEADER_H : 0) + items.length * ITEM_H + GAP
+  }
+
+  // Each level positions its first item at cursor Y
+  // level 0: top = y - LV0_FIRST (first item at y)
+  // level 1+: top = y - LVN_FIRST (first item at y)
+  let tops: number[] = [y - LV0_FIRST]
+  for (let d = 1; d < totalLevels; d++) {
+    tops[d] = y - LVN_FIRST
+  }
+
+  // Viewport clamping: find tallest level, adjust all tops
+  let maxH = 0
+  for (let i = 0; i < levels.length; i++) {
+    const h = levelHeight(levels[i].depth, levels[i].items)
+    if (h > maxH) maxH = h
+  }
+
+  // Clamp level 0 top
+  let menuTop0 = tops[0]
+  if (menuTop0 + maxH > window.innerHeight - GAP) {
+    menuTop0 = y - maxH + GAP
+  }
+  if (menuTop0 < GAP) menuTop0 = GAP
+
+  // Level 0 top + offset → first item Y position
+  const firstItemY = menuTop0 + LV0_FIRST
+
+  // Level N tops: align first item with level 0's first item
+  for (let d = 1; d < totalLevels; d++) {
+    tops[d] = firstItemY - LVN_FIRST
+    // Clamp individually
+    const h = levelHeight(d, levels[d]?.items ?? [])
+    if (tops[d] + h > window.innerHeight - GAP) {
+      tops[d] = window.innerHeight - GAP - h
+    }
+    if (tops[d] < GAP) tops[d] = GAP
+  }
+
+  // Horizontal: cascade may overflow right edge
+  let offsetX = 0
+  if (x + MENU_W > window.innerWidth - GAP) {
+    offsetX = window.innerWidth - GAP - x - MENU_W
+  }
+
+  // ─── Reveal animation ───
   useEffect(() => {
     if (levels.length > prevLenRef.current) {
       const newLevel = levels.length - 1
@@ -107,35 +169,83 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
         setRevealed(prev => new Set([...prev, newLevel]))
       })
     } else if (levels.length < prevLenRef.current) {
-      // Collapsed → reset revealed for unshown levels
       setRevealed(new Set([0]))
     }
     prevLenRef.current = levels.length
   }, [levels.length])
 
-  // Mouse enter: delay opening submenus
+  // ─── Mouse enter: highlight only (immediate) ───
   const handleEnter = (depth: number, index: number) => {
-    if (timerRef.current) clearTimeout(timerRef.current)
+    // Cancel leave timer — user is back in the menu
+    if (leaveTimerRef.current) {
+      clearTimeout(leaveTimerRef.current)
+      leaveTimerRef.current = null
+    }
 
-    const newStack = stack.slice(0, depth)
-    newStack.push(index)
+    setHovered(prev => {
+      const next = prev.slice(0, depth)
+      next.push(index)
+      return next
+    })
+  }
 
-    const isDeeper = newStack.length > stack.length
-    if (isDeeper && newStack.length > 1) {
-      // Opening a deeper submenu → delay to prevent accidental opens
-      timerRef.current = window.setTimeout(() => {
-        setStack(newStack)
-      }, 200)
-    } else {
-      setStack(newStack)
+  // ─── Click: opens submenu if has children, else runs action ───
+  const handleClick = (node: MenuNode, depth: number, index: number) => {
+    if (node.children) {
+      setOpenStack(prev => {
+        const next = prev.slice(0, depth)
+        next.push(index)
+        return next
+      })
+      // Also align hover to clicked item
+      setHovered(prev => {
+        const next = prev.slice(0, depth)
+        next.push(index)
+        return next
+      })
+    } else if (node.action) {
+      node.action()
     }
   }
 
+  // ─── Auto-close: cursor leaves menu → 1s timer ───
+  const handleMouseLeave = () => {
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+    leaveTimerRef.current = window.setTimeout(() => {
+      onClose()
+    }, 1000)
+  }
+
+  // ─── Double right-click: go up one level or close ───
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (openStack.length > 0) {
+      // Go up one level — position parent's first item at cursor
+      const parentStack = openStack.slice(0, -1)
+      setOpenStack(parentStack)
+      setHovered(parentStack.length > 0 ? [...parentStack] : [])
+      setRevealed(new Set([0]))
+      prevLenRef.current = 1
+    } else {
+      // Already at root → close
+      onClose()
+    }
+  }
+
+  const ease = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
+  const dur = 0.3
+
   return (
-    <div ref={rootRef}>
+    <div
+      ref={rootRef}
+      onMouseLeave={handleMouseLeave}
+      onContextMenu={handleContextMenu}
+    >
       {levels.map(({ depth, items, sel }) => {
-        // Each level shifts left so deepest is at x, parents to the left
-        const left = x + MENU_W * (depth - (totalLevels - 1))
+        const left = offsetX + x + MENU_W * (depth - (totalLevels - 1))
+        const top = tops[depth] ?? 0
         const isHidden = depth > 0 && !revealed.has(depth)
 
         return (
@@ -144,21 +254,20 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
             style={{
               position: 'fixed',
               left,
-              top: y,
+              top,
               zIndex: 2000 - depth,
               background: bg,
               border: `1px solid ${border}`,
               borderRadius: 8,
               padding: '4px 0',
               minWidth: MENU_W,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+              boxShadow: '0 6px 24px rgba(0,0,0,0.25)',
               fontSize: 13,
               color: fg,
               fontFamily: 'system-ui, -apple-system, sans-serif',
               userSelect: 'none',
               opacity: isHidden ? 0 : 1,
-              pointerEvents: isHidden ? 'none' : 'auto',
-              transition: `left 0.12s ease-out, opacity 0.12s ease-out`,
+              transition: `left ${dur}s ${ease}, opacity ${dur}s ${ease}`,
             }}
           >
             {depth === 0 && (
@@ -191,9 +300,10 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
                     whiteSpace: 'nowrap',
                     height: ITEM_H - 8,
                     lineHeight: `${ITEM_H - 8}px`,
+                    transition: `background ${dur * 0.5}s ease`,
                   }}
                   onMouseEnter={() => handleEnter(depth, i)}
-                  onClick={() => { if (node.action) node.action() }}
+                  onClick={() => handleClick(node, depth, i)}
                 >
                   <span>{node.label}</span>
                   {hasChildren && <span style={{ opacity: 0.4, fontSize: 10, marginLeft: 12 }}>▶</span>}
