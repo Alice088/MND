@@ -119,43 +119,49 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     if (info) levels.push({ depth: d, ...info })
   }
 
-  // ─── Vertical position: all levels move as one block ───
+  // ─── Dimensions ───
   function levelHeight(d: number, its: MenuNode[]): number {
     return GAP + (d === 0 ? HEADER_H : 0) + its.length * ITEM_H + GAP
   }
 
-  // 1. Ideal tops — each level's first item at cursor Y
+  // ─── Vertical: first item at cursor Y, shift as block if overflow ───
   const idealTops: number[] = []
   idealTops[0] = y - LV0_FIRST
   for (let d = 1; d < totalLevels; d++) {
     idealTops[d] = y - LVN_FIRST
   }
 
-  // 2. Find lowest bottom among all levels
+  // Build actual tops with uniform shift
   let lowestBottom = -Infinity
   for (const { depth: d, items: its } of levels) {
     const b = idealTops[d] + levelHeight(d, its)
     if (b > lowestBottom) lowestBottom = b
   }
 
-  // 3. Shift everything up if overflowing bottom
   let shift = 0
-  if (lowestBottom > window.innerHeight - GAP) {
-    shift = window.innerHeight - GAP - lowestBottom
+  const bottomLimit = window.innerHeight - GAP
+  if (lowestBottom > bottomLimit) {
+    shift = bottomLimit - lowestBottom  // negative → move up
   }
 
-  // 4. Apply shift, then clamp level 0 top to GAP
   const tops = idealTops.map(t => t + shift)
+
+  // Clamp: if level 0 top < GAP, push everything down
   if (tops[0] < GAP) {
     const extra = GAP - tops[0]
     for (let i = 0; i < tops.length; i++) tops[i] += extra
   }
 
-  // ─── Horizontal: cascade right → shift left if overflow ───
-  let offsetX = 0
-  if (x + MENU_W > window.innerWidth - GAP) {
-    offsetX = window.innerWidth - GAP - x - MENU_W
+  // ─── Horizontal: center deepest level on cursor X ───
+  const deepestLeft = x - MENU_W / 2
+  let hShift = 0
+  if (deepestLeft + MENU_W > window.innerWidth - GAP) {
+    hShift = window.innerWidth - GAP - (deepestLeft + MENU_W)
   }
+  if (deepestLeft + hShift < GAP) {
+    hShift = GAP - deepestLeft
+  }
+  const baseX = deepestLeft + hShift
 
   // ─── Reveal animation ───
   useEffect(() => {
@@ -170,9 +176,8 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     prevLenRef.current = levels.length
   }, [levels.length])
 
-  // ─── Mouse enter: highlight only (immediate) ───
+  // ─── Mouse enter: highlight (immediate), cancel leave timer ───
   const handleEnter = (_depth: number, _index: number) => {
-    // cancel leave timer — user back in menu
     if (leaveTimerRef.current) {
       clearTimeout(leaveTimerRef.current)
       leaveTimerRef.current = null
@@ -184,7 +189,15 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     })
   }
 
-  // ─── Click: opens submenu if has children ───
+  // Mouse leave per-item: clear that depth and deeper
+  const handleItemLeave = (_depth: number) => {
+    setHovered(prev => {
+      if (_depth >= prev.length) return prev
+      return prev.slice(0, _depth)
+    })
+  }
+
+  // ─── Click: open submenu or run action ───
   const handleClick = (node: MenuNode, depth: number, index: number) => {
     if (node.children) {
       setOpenStack(prev => {
@@ -202,13 +215,14 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     }
   }
 
-  // ─── Auto-close: 1s after mouse leaves menu ───
+  // ─── Auto-close: 1s after cursor leaves menu zone ───
   const handleMouseLeave = () => {
+    setHovered([])  // clear highlight immediately
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
     leaveTimerRef.current = window.setTimeout(fadeClose, 1000)
   }
 
-  // ─── Double right-click: go up a level or close ───
+  // ─── Right-click inside menu: go up a level or close ───
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -233,7 +247,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
       onContextMenu={handleContextMenu}
     >
       {levels.map(({ depth, items, sel }) => {
-        const left = offsetX + x + MENU_W * (depth - (totalLevels - 1))
+        const left = baseX + MENU_W * (depth - (totalLevels - 1))
         const top = tops[depth] ?? 0
         const isHidden = (depth > 0 && !revealed.has(depth)) || exiting
 
@@ -292,6 +306,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
                     transition: `background ${dur * 0.5}s ease`,
                   }}
                   onMouseEnter={() => handleEnter(depth, i)}
+                  onMouseLeave={() => handleItemLeave(depth)}
                   onClick={() => handleClick(node, depth, i)}
                 >
                   <span>{node.label}</span>
