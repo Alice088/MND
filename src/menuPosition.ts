@@ -1,4 +1,6 @@
-// Pure positioning math for context menu — cascading like Windows
+// Pure positioning math for context menu
+// Each new level opens with its first item at the cursor's click position.
+// Parent levels shift uniformly to accommodate.
 
 export const MENU_W = 170
 export const ITEM_H = 32
@@ -12,26 +14,26 @@ export interface LevelInfo {
   itemCount: number
 }
 
+export interface ClickPos {
+  x: number
+  y: number
+}
+
 export function levelHeight(depth: number, itemCount: number): number {
   return GAP + (depth === 0 ? HEADER_H : 0) + itemCount * ITEM_H + GAP
 }
 
 /**
- * Compute vertical tops for all levels.
- *
- * Level 0: first item at cursor Y.
- * Level N (submenu): first item aligned to the parent item that opened it.
- *   Parent item Y = top[parentDepth] + FIRST_OFFSET(parentDepth) + openStack[parentDepth] * ITEM_H
- *   Level N top = parentItemY - LVN_FIRST
- *
- * All levels move as ONE BLOCK when viewport overflow occurs.
- * Uniform shift: same delta applied to every level's top.
+ * Vertical positioning.
+ * Level 0: first item at cursorY (right-click Y).
+ * Level N (N>0): first item at clickY[N] (Y when item was clicked to open this level).
+ * All levels share uniform viewport-clamping shift.
  */
 export function computeTops(
-  cursorY: number,
+  cursorY: number,       // original right-click Y
   vpH: number,
   levels: LevelInfo[],
-  openStack: number[],
+  clickYs: number[],     // [cursorY, clickY_for_level1, clickY_for_level2, ...]
 ): number[] {
   const N = levels.length
   if (N === 0) return []
@@ -41,20 +43,16 @@ export function computeTops(
   // Level 0: first item at cursor Y
   ideal[0] = cursorY - LV0_FIRST
 
-  // Level N: align to parent item
+  // Level N: first item at click Y that opened this level
   for (let d = 1; d < N; d++) {
-    const parentDepth = d - 1
-    const parentItemIdx = openStack[parentDepth] ?? 0
-    const parentFirstOffset = parentDepth === 0 ? LV0_FIRST : LVN_FIRST
-    const parentItemY = ideal[parentDepth] + parentFirstOffset + parentItemIdx * ITEM_H
-    ideal[d] = parentItemY - LVN_FIRST
+    const clickY = clickYs[d] ?? cursorY
+    ideal[d] = clickY - LVN_FIRST
   }
 
-  // Compute span
+  // Uniform shift to fit viewport
   const bottomLimit = vpH - GAP
   const topLimit = GAP
 
-  // Apply uniform shift if overflow below
   let lowestBottom = -Infinity
   for (let i = 0; i < N; i++) {
     const l = levels[i]
@@ -67,13 +65,11 @@ export function computeTops(
 
   const shifted = ideal.map(t => t + shift)
 
-  // Clamp top to GAP
   if (shifted[0] < topLimit) {
     const extra = topLimit - shifted[0]
     for (let i = 0; i < shifted.length; i++) shifted[i] += extra
   }
 
-  // Re-check bottom after clamp
   let finalBottom = -Infinity
   for (let i = 0; i < N; i++) {
     const l = levels[i]
@@ -85,7 +81,6 @@ export function computeTops(
     for (let i = 0; i < shifted.length; i++) shifted[i] += extra
   }
 
-  // Final top clamp
   if (shifted[0] < topLimit) {
     const extra = topLimit - shifted[0]
     for (let i = 0; i < shifted.length; i++) shifted[i] += extra
@@ -100,20 +95,28 @@ export function firstItemY(tops: number[], depths: number[]): number[] {
 }
 
 /**
- * Horizontal: DEEPEST level's LEFT EDGE at cursor X.
- * Cascade left: base level at cursorX - MENU_W * (totalLevels - 1).
- * Each subsequent level is MENU_W to the right.
- * Clamped so no level overflows viewport.
+ * Horizontal: the DEEPEST level's LEFT EDGE is at its clickX.
+ * All other levels cascade uniformly: level N at deepestLeft + (N - deepest) * MENU_W.
+ * Clamped to viewport (no overflow).
  */
-export function computeBaseX(cursorX: number, vpW: number, totalLevels: number): number {
-  // deepest level left = cursorX, base = shift back by (totalLevels-1) * MENU_W
-  let base = cursorX - MENU_W * (totalLevels - 1)
-  // clamp so no level overflows left or right
-  const minBase = GAP
+export function computeBaseX(
+  cursorX: number,        // original right-click X (for level 0)
+  vpW: number,
+  totalLevels: number,
+  clickXs: number[],      // [cursorX, clickX_for_level1, ...], length = totalLevels
+): number {
+  const deepestIdx = totalLevels - 1
+  const deepestClickX = clickXs[deepestIdx] ?? cursorX
+
+  // Level 0 left = deepestClickX - deepestIdx * MENU_W
+  let base = deepestClickX - deepestIdx * MENU_W
+
+  // Clamp to viewport
   const maxBase = vpW - GAP - totalLevels * MENU_W
-  if (base < minBase) base = minBase
-  if (maxBase < minBase) { base = minBase } // viewport too narrow, just clamp
+  if (base < GAP) base = GAP
+  if (maxBase < GAP) { base = GAP } // viewport too narrow
   else if (base > maxBase) base = maxBase
+
   return base
 }
 

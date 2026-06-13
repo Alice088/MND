@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { computeTops, computeBaseX, computeLefts, MENU_W, ITEM_H } from './menuPosition'
+import { computeTops, computeBaseX, computeLefts, MENU_W } from './menuPosition'
+import type { ClickPos } from './menuPosition'
 
 type ObjectType = 'space' | 'note' | 'file' | 'link' | 'shape'
 
@@ -19,6 +20,11 @@ interface MenuNode {
   label: string
   children?: MenuNode[]
   action?: () => void
+}
+
+interface StackEntry {
+  index: number
+  click: ClickPos // cursor position when this level was opened
 }
 
 // ─── Styles ───
@@ -46,8 +52,8 @@ const styles = {
     animation: hidden ? 'none' : `menuAppear 0.2s ${ease}`,
     transition: `opacity 0.2s ${ease}`,
   }),
-  item: (hover: boolean, fg: string, hoverBg: string, depth: number) => ({
-    padding: depth > 0 ? '4px 14px 4px 24px' : '6px 14px',
+  item: (hover: boolean, fg: string, hoverBg: string) => ({
+    padding: '4px 14px',
     cursor: 'pointer' as const,
     color: fg,
     background: hover ? hoverBg : 'transparent',
@@ -55,8 +61,8 @@ const styles = {
     justifyContent: 'space-between' as const,
     alignItems: 'center' as const,
     whiteSpace: 'nowrap' as const,
-    height: ITEM_H - 8,
-    lineHeight: `${ITEM_H - 8}px`,
+    height: 24,
+    lineHeight: '24px',
     transition: `background 0.12s ease`,
   }),
 }
@@ -65,7 +71,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   const rootRef = useRef<HTMLDivElement>(null)
   const leaveTimerRef = useRef<number | null>(null)
   const exitingRef = useRef(false)
-  const [openStack, setOpenStack] = useState<number[]>([])
+  const [openStack, setOpenStack] = useState<StackEntry[]>([])
   const [hovered, setHovered] = useState<{ depth: number; index: number } | null>(null)
   const [exiting, setExiting] = useState(false)
   const [visibleDepths, setVisibleDepths] = useState<Set<number>>(new Set([0]))
@@ -109,12 +115,14 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   ], [onCreateObject, worldX, worldY, fadeClose])
 
   // ─── Resolve levels from openStack ───
-  const { totalLevels, levels, levelInfos } = useMemo(() => {
+  const { totalLevels, levels, levelInfos, clickYs, clickXs } = useMemo(() => {
     function getLevel(d: number): { items: MenuNode[] } | null {
       let items: MenuNode[] = tree
       for (let i = 0; i < d; i++) {
-        const idx = openStack[i]
-        if (idx == null || idx < 0 || idx >= items.length) return null
+        const entry = openStack[i]
+        if (!entry) return null
+        const idx = entry.index
+        if (idx < 0 || idx >= items.length) return null
         const n = items[idx]
         if (!n.children) return null
         items = n.children
@@ -122,17 +130,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
       return { items }
     }
 
-    let cnt = 0
-    {
-      let items: MenuNode[] = tree
-      for (let i = 0; ; i++) {
-        const idx = openStack[i]
-        if (idx == null || idx < 0 || idx >= items.length) { cnt = i + 1; break }
-        const n = items[idx]
-        if (!n.children) { cnt = i + 1; break }
-        items = n.children
-      }
-    }
+    let cnt = openStack.length + 1 // level 0 + one per openStack entry
 
     const raw: { depth: number; items: MenuNode[] }[] = []
     for (let d = 0; d < cnt; d++) {
@@ -144,21 +142,22 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
       totalLevels: cnt,
       levels: raw,
       levelInfos: raw.map(l => ({ depth: l.depth, itemCount: l.items.length })),
+      clickYs: openStack.map(e => e.click.y),
+      clickXs: openStack.map(e => e.click.x),
     }
   }, [tree, openStack])
 
-  // ─── Position: computed from ALL levels (even invisible) to prevent jumping ───
+  // ─── Position ───
   const visibleLevels = useMemo(() => levels.filter(l => visibleDepths.has(l.depth)), [levels, visibleDepths])
 
-  const tops = useMemo(() => computeTops(y, window.innerHeight, levelInfos, openStack), [y, levelInfos, openStack])
-  const baseX = useMemo(() => computeBaseX(x, window.innerWidth, totalLevels), [x, totalLevels])
+  const tops = useMemo(() => computeTops(y, window.innerHeight, levelInfos, [y, ...clickYs]), [y, levelInfos, clickYs])
+  const baseX = useMemo(() => computeBaseX(x, window.innerWidth, totalLevels, [x, ...clickXs]), [x, totalLevels, clickXs])
   const lefts = useMemo(() => computeLefts(baseX, totalLevels), [baseX, totalLevels])
 
   // ─── Reveal new level after a tiny delay (for animation) ───
   useEffect(() => {
     const last = levels.length - 1
     if (last >= 0 && !visibleDepths.has(last)) {
-      // Add to visible set after mount so CSS animation triggers
       const id = requestAnimationFrame(() => {
         setVisibleDepths(prev => new Set([...prev, last]))
       })
@@ -177,10 +176,11 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   }, [])
 
   // ─── Click: open submenu or execute action ───
-  const handleClick = useCallback((node: MenuNode, depth: number, index: number) => {
+  const handleClick = useCallback((node: MenuNode, depth: number, index: number, e: React.MouseEvent) => {
     if (node.children) {
+      const click = { x: e.clientX, y: e.clientY }
       const newStack = openStack.slice(0, depth)
-      newStack.push(index)
+      newStack.push({ index, click })
       setOpenStack(newStack)
       setHovered({ depth, index })
       // Reset visible depths: all existing + the new one will appear via useEffect
@@ -267,10 +267,10 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
             {items.map((node, i) => (
               <div
                 key={node.label}
-                style={styles.item(isHovered(depth, i), colors.fg, colors.hoverBg, depth)}
+                style={styles.item(isHovered(depth, i), colors.fg, colors.hoverBg)}
                 onMouseEnter={() => handleEnter(depth, i)}
                 onMouseLeave={handleItemLeave}
-                onClick={() => handleClick(node, depth, i)}
+                onClick={(e) => handleClick(node, depth, i, e)}
               >
                 <span>{node.label}</span>
                 {node.children && <span style={{ opacity: 0.4, fontSize: 10, marginLeft: 12 }}>▶</span>}
