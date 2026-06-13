@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type ObjectType = 'space' | 'note' | 'file' | 'link' | 'shape'
 
@@ -17,8 +17,8 @@ export type { ObjectType }
 const MENU_W = 170
 const ITEM_H = 32
 const HEADER_H = 22
-const LV0_FIRST = 30  // level 0: top → first item (4pad + 22header + 4gap)
-const LVN_FIRST = 4   // level N: top → first item (4pad, no header)
+const LV0_FIRST = 30   // level 0: menu top → first item Y
+const LVN_FIRST = 4    // level N: menu top → first item Y
 const GAP = 8
 
 interface MenuNode {
@@ -29,48 +29,35 @@ interface MenuNode {
 
 export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onClose, isDark }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
-  const timerRef = useRef<number | null>(null)
   const leaveTimerRef = useRef<number | null>(null)
 
-  // openStack controls which submenus are VISIBLE (set by click)
   const [openStack, setOpenStack] = useState<number[]>([])
-  // hovered tracks which item is highlighted per depth (mouse enter/leave)
   const [hovered, setHovered] = useState<number[]>([])
-
+  const [exiting, setExiting] = useState(false)
   const [revealed, setRevealed] = useState<Set<number>>(new Set([0]))
   const prevLenRef = useRef(1)
 
-  const tree: MenuNode[] = [
-    {
-      label: 'Create',
-      children: [
-        { label: 'Space', action: () => { onCreateObject('space', worldX, worldY); onClose() } },
-        { label: 'Note', action: () => { onCreateObject('note', worldX, worldY); onClose() } },
-        { label: 'File', action: () => { onCreateObject('file', worldX, worldY); onClose() } },
-        { label: 'Link', action: () => { onCreateObject('link', worldX, worldY); onClose() } },
-        {
-          label: 'Shape',
-          children: [
-            { label: 'Rectangle', action: () => { onCreateObject('shape', worldX, worldY, { kind: 'rectangle' }); onClose() } },
-            { label: 'Circle', action: () => { onCreateObject('shape', worldX, worldY, { kind: 'circle' }); onClose() } },
-          ],
-        },
-      ],
-    },
-  ]
+  // ─── Fade-out close ───
+  const fadeOutRef = useRef(false)
+  const fadeClose = useCallback(() => {
+    if (fadeOutRef.current) return
+    fadeOutRef.current = true
+    setExiting(true)
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+    setTimeout(onClose, 400)
+  }, [onClose])
 
   // Close on click outside
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) onClose()
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) fadeClose()
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [onClose])
+  }, [fadeClose])
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
       if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
     }
   }, [])
@@ -80,6 +67,25 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   const border = isDark ? '#333' : '#ddd'
   const hoverBg = isDark ? '#333' : '#f0f0f0'
   const secColor = isDark ? '#888' : '#999'
+
+  const tree: MenuNode[] = [
+    {
+      label: 'Create',
+      children: [
+        { label: 'Space', action: () => { onCreateObject('space', worldX, worldY); fadeClose() } },
+        { label: 'Note', action: () => { onCreateObject('note', worldX, worldY); fadeClose() } },
+        { label: 'File', action: () => { onCreateObject('file', worldX, worldY); fadeClose() } },
+        { label: 'Link', action: () => { onCreateObject('link', worldX, worldY); fadeClose() } },
+        {
+          label: 'Shape',
+          children: [
+            { label: 'Rectangle', action: () => { onCreateObject('shape', worldX, worldY, { kind: 'rectangle' }); fadeClose() } },
+            { label: 'Circle', action: () => { onCreateObject('shape', worldX, worldY, { kind: 'circle' }); fadeClose() } },
+          ],
+        },
+      ],
+    },
+  ]
 
   // ─── Resolve tree levels from openStack ───
   function getLevel(depth: number): { items: MenuNode[]; sel: number | null } | null {
@@ -91,7 +97,6 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
       if (!node.children) return null
       items = node.children
     }
-    // For highlight: use hovered[depth] if set, else openStack[depth]
     const selIdx = depth < hovered.length ? hovered[depth] : (depth < openStack.length ? openStack[depth] : null)
     return { items, sel: selIdx }
   }
@@ -114,48 +119,39 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     if (info) levels.push({ depth: d, ...info })
   }
 
-  // ─── Position ───
-  function levelHeight(d: number, items: MenuNode[]): number {
-    return GAP + (d === 0 ? HEADER_H : 0) + items.length * ITEM_H + GAP
+  // ─── Vertical position: all levels move as one block ───
+  function levelHeight(d: number, its: MenuNode[]): number {
+    return GAP + (d === 0 ? HEADER_H : 0) + its.length * ITEM_H + GAP
   }
 
-  // Each level positions its first item at cursor Y
-  // level 0: top = y - LV0_FIRST (first item at y)
-  // level 1+: top = y - LVN_FIRST (first item at y)
-  let tops: number[] = [y - LV0_FIRST]
+  // 1. Ideal tops — each level's first item at cursor Y
+  const idealTops: number[] = []
+  idealTops[0] = y - LV0_FIRST
   for (let d = 1; d < totalLevels; d++) {
-    tops[d] = y - LVN_FIRST
+    idealTops[d] = y - LVN_FIRST
   }
 
-  // Viewport clamping: find tallest level, adjust all tops
-  let maxH = 0
-  for (let i = 0; i < levels.length; i++) {
-    const h = levelHeight(levels[i].depth, levels[i].items)
-    if (h > maxH) maxH = h
+  // 2. Find lowest bottom among all levels
+  let lowestBottom = -Infinity
+  for (const { depth: d, items: its } of levels) {
+    const b = idealTops[d] + levelHeight(d, its)
+    if (b > lowestBottom) lowestBottom = b
   }
 
-  // Clamp level 0 top
-  let menuTop0 = tops[0]
-  if (menuTop0 + maxH > window.innerHeight - GAP) {
-    menuTop0 = y - maxH + GAP
-  }
-  if (menuTop0 < GAP) menuTop0 = GAP
-
-  // Level 0 top + offset → first item Y position
-  const firstItemY = menuTop0 + LV0_FIRST
-
-  // Level N tops: align first item with level 0's first item
-  for (let d = 1; d < totalLevels; d++) {
-    tops[d] = firstItemY - LVN_FIRST
-    // Clamp individually
-    const h = levelHeight(d, levels[d]?.items ?? [])
-    if (tops[d] + h > window.innerHeight - GAP) {
-      tops[d] = window.innerHeight - GAP - h
-    }
-    if (tops[d] < GAP) tops[d] = GAP
+  // 3. Shift everything up if overflowing bottom
+  let shift = 0
+  if (lowestBottom > window.innerHeight - GAP) {
+    shift = window.innerHeight - GAP - lowestBottom
   }
 
-  // Horizontal: cascade may overflow right edge
+  // 4. Apply shift, then clamp level 0 top to GAP
+  const tops = idealTops.map(t => t + shift)
+  if (tops[0] < GAP) {
+    const extra = GAP - tops[0]
+    for (let i = 0; i < tops.length; i++) tops[i] += extra
+  }
+
+  // ─── Horizontal: cascade right → shift left if overflow ───
   let offsetX = 0
   if (x + MENU_W > window.innerWidth - GAP) {
     offsetX = window.innerWidth - GAP - x - MENU_W
@@ -175,21 +171,20 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   }, [levels.length])
 
   // ─── Mouse enter: highlight only (immediate) ───
-  const handleEnter = (depth: number, index: number) => {
-    // Cancel leave timer — user is back in the menu
+  const handleEnter = (_depth: number, _index: number) => {
+    // cancel leave timer — user back in menu
     if (leaveTimerRef.current) {
       clearTimeout(leaveTimerRef.current)
       leaveTimerRef.current = null
     }
-
     setHovered(prev => {
-      const next = prev.slice(0, depth)
-      next.push(index)
+      const next = prev.slice(0, _depth)
+      next.push(_index)
       return next
     })
   }
 
-  // ─── Click: opens submenu if has children, else runs action ───
+  // ─── Click: opens submenu if has children ───
   const handleClick = (node: MenuNode, depth: number, index: number) => {
     if (node.children) {
       setOpenStack(prev => {
@@ -197,7 +192,6 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
         next.push(index)
         return next
       })
-      // Also align hover to clicked item
       setHovered(prev => {
         const next = prev.slice(0, depth)
         next.push(index)
@@ -208,33 +202,28 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     }
   }
 
-  // ─── Auto-close: cursor leaves menu → 1s timer ───
+  // ─── Auto-close: 1s after mouse leaves menu ───
   const handleMouseLeave = () => {
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
-    leaveTimerRef.current = window.setTimeout(() => {
-      onClose()
-    }, 1000)
+    leaveTimerRef.current = window.setTimeout(fadeClose, 1000)
   }
 
-  // ─── Double right-click: go up one level or close ───
+  // ─── Double right-click: go up a level or close ───
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-
     if (openStack.length > 0) {
-      // Go up one level — position parent's first item at cursor
       const parentStack = openStack.slice(0, -1)
       setOpenStack(parentStack)
       setHovered(parentStack.length > 0 ? [...parentStack] : [])
       setRevealed(new Set([0]))
       prevLenRef.current = 1
     } else {
-      // Already at root → close
-      onClose()
+      fadeClose()
     }
   }
 
-  const ease = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
+  const ease = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'
   const dur = 0.3
 
   return (
@@ -246,7 +235,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
       {levels.map(({ depth, items, sel }) => {
         const left = offsetX + x + MENU_W * (depth - (totalLevels - 1))
         const top = tops[depth] ?? 0
-        const isHidden = depth > 0 && !revealed.has(depth)
+        const isHidden = (depth > 0 && !revealed.has(depth)) || exiting
 
         return (
           <div
