@@ -229,7 +229,7 @@ export default function Canvas({
           drawNoteObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as NoteObject).content, label, fs)
           break
         case 'file':
-          drawFileObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as FileObject).mime_type, label, fs)
+          drawFileObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as FileObject).mime_type, label, fs, (obj as FileObject).content || '')
           break
         case 'link':
           drawLinkObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as LinkObject).url, label, fs)
@@ -359,23 +359,83 @@ export default function Canvas({
 
   function drawNoteObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
-    zoom: number, dark: boolean, _content: string, label: string, fs: FontSize,
+    zoom: number, dark: boolean, content: string, label: string, fs: FontSize,
   ) {
-    const fill = dark ? 'rgba(255,255,220,0.08)' : 'rgba(255,255,200,0.25)'
-    ctx.fillStyle = fill
+    const bgFill = dark ? 'rgba(60,58,50,0.95)' : 'rgba(255,250,230,0.95)'
+    ctx.fillStyle = bgFill
     ctx.strokeStyle = dark ? 'rgba(255,255,220,0.3)' : 'rgba(180,180,120,0.5)'
     ctx.lineWidth = 1.5
     drawRect(ctx, sx, sy, sw, sh, 2 * zoom)
     ctx.fill()
     ctx.stroke()
 
+    // Header with name
+    const headerH = Math.max(22, 22 * zoom)
+    ctx.fillStyle = dark ? 'rgba(80,78,65,0.95)' : 'rgba(230,225,200,0.95)'
+    ctx.beginPath()
+    ctx.roundRect(sx, sy, sw, headerH, [2 * zoom, 2 * zoom, 0, 0])
+    ctx.fill()
+
+    // Header bottom line
+    ctx.strokeStyle = dark ? 'rgba(255,255,220,0.15)' : 'rgba(180,180,120,0.25)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(sx, sy + headerH)
+    ctx.lineTo(sx + sw, sy + headerH)
+    ctx.stroke()
+
+    // Name in header
+    if (label) {
+      ctx.fillStyle = dark ? 'rgba(255,255,220,0.7)' : 'rgba(80,80,50,0.85)'
+      const baseSize = FONT_SIZE_MAP[fs]
+      const headerFont = Math.max(9, baseSize * zoom)
+      ctx.font = `${headerFont}px system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, sx + sw / 2, sy + headerH / 2)
+    }
+
+    // Body text (word-wrapped)
+    if (content && sw > 40 && sh - headerH > 20) {
+      ctx.fillStyle = dark ? 'rgba(220,220,200,0.75)' : 'rgba(60,60,40,0.8)'
+      const bodyFontSize = Math.max(8, 11 * zoom)
+      ctx.font = `${bodyFontSize}px system-ui, sans-serif`
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'top'
+      const pad = 6 * zoom
+      const maxW = sw - pad * 2
+      const lineH = bodyFontSize * 1.35
+      const maxLines = Math.floor((sh - headerH - pad * 2) / lineH)
+      if (maxLines > 0) {
+        // Split into words and wrap
+        const words = content.split(/\s+/)
+        let lines: string[] = []
+        let cur = ''
+        for (const w of words) {
+          const test = cur ? cur + ' ' + w : w
+          if (ctx.measureText(test).width > maxW && cur) {
+            lines.push(cur)
+            if (lines.length >= maxLines) break
+            cur = w
+          } else {
+            cur = test
+          }
+        }
+        if (cur && lines.length < maxLines) lines.push(cur)
+        for (let i = 0; i < lines.length; i++) {
+          ctx.fillText(lines[i], sx + pad, sy + headerH + pad + i * lineH)
+        }
+      }
+    }
+
+    // Small line decorations (existing style hint)
     if (sw > 50 && sh > 40) {
-      ctx.strokeStyle = dark ? 'rgba(255,255,220,0.15)' : 'rgba(120,120,80,0.25)'
+      ctx.strokeStyle = dark ? 'rgba(255,255,220,0.08)' : 'rgba(120,120,80,0.12)'
       ctx.lineWidth = 1
       const pad = 8 * zoom
-      const lineH = Math.max(6, 10 * zoom)
+      const lineH2 = Math.max(6, 10 * zoom)
       for (let i = 0; i < 3; i++) {
-        const ly = sy + pad + (i + 1) * lineH
+        const ly = sy + pad + (i + 1) * lineH2
         if (ly > sy + sh - pad) break
         ctx.beginPath()
         ctx.moveTo(sx + pad, ly)
@@ -383,28 +443,80 @@ export default function Canvas({
         ctx.stroke()
       }
     }
-
-    if (sw > 30 && sh > 20) {
-      ctx.fillStyle = dark ? 'rgba(255,255,220,0.5)' : 'rgba(80,80,50,0.7)'
-      const baseSize = FONT_SIZE_MAP[fs]
-      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
-      ctx.textBaseline = 'top'
-      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
-    }
   }
 
   function drawFileObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
     zoom: number, dark: boolean, _mime: string | undefined, label: string, fs: FontSize,
+    content: string,
   ) {
-    const fill = dark ? 'rgba(200,220,255,0.06)' : 'rgba(200,220,255,0.2)'
-    ctx.fillStyle = fill
+    const bgFill = dark ? 'rgba(40,50,70,0.95)' : 'rgba(225,235,255,0.95)'
+    ctx.fillStyle = bgFill
     ctx.strokeStyle = dark ? 'rgba(200,220,255,0.3)' : 'rgba(100,130,180,0.5)'
     ctx.lineWidth = 1.5
     drawRect(ctx, sx, sy, sw, sh, 2 * zoom)
     ctx.fill()
     ctx.stroke()
 
+    // Header with name
+    const headerH = Math.max(22, 22 * zoom)
+    ctx.fillStyle = dark ? 'rgba(55,68,95,0.95)' : 'rgba(200,215,240,0.95)'
+    ctx.beginPath()
+    ctx.roundRect(sx, sy, sw, headerH, [2 * zoom, 2 * zoom, 0, 0])
+    ctx.fill()
+
+    // Header bottom line
+    ctx.strokeStyle = dark ? 'rgba(200,220,255,0.15)' : 'rgba(100,130,180,0.25)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(sx, sy + headerH)
+    ctx.lineTo(sx + sw, sy + headerH)
+    ctx.stroke()
+
+    // Name in header
+    if (label) {
+      ctx.fillStyle = dark ? 'rgba(200,220,255,0.7)' : 'rgba(60,80,120,0.85)'
+      const baseSize = FONT_SIZE_MAP[fs]
+      const headerFont = Math.max(9, baseSize * zoom)
+      ctx.font = `${headerFont}px system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, sx + sw / 2, sy + headerH / 2)
+    }
+
+    // Body text (word-wrapped)
+    if (content && sw > 40 && sh - headerH > 20) {
+      ctx.fillStyle = dark ? 'rgba(210,220,240,0.75)' : 'rgba(50,60,90,0.8)'
+      const bodyFontSize = Math.max(8, 11 * zoom)
+      ctx.font = `${bodyFontSize}px system-ui, sans-serif`
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'top'
+      const pad = 6 * zoom
+      const maxW = sw - pad * 2
+      const lineH = bodyFontSize * 1.35
+      const maxLines = Math.floor((sh - headerH - pad * 2) / lineH)
+      if (maxLines > 0) {
+        const words = content.split(/\s+/)
+        let lines: string[] = []
+        let cur = ''
+        for (const w of words) {
+          const test = cur ? cur + ' ' + w : w
+          if (ctx.measureText(test).width > maxW && cur) {
+            lines.push(cur)
+            if (lines.length >= maxLines) break
+            cur = w
+          } else {
+            cur = test
+          }
+        }
+        if (cur && lines.length < maxLines) lines.push(cur)
+        for (let i = 0; i < lines.length; i++) {
+          ctx.fillText(lines[i], sx + pad, sy + headerH + pad + i * lineH)
+        }
+      }
+    }
+
+    // Corner fold decoration (existing style hint)
     if (sw > 30 && sh > 30) {
       const fold = Math.min(20 * zoom, sw * 0.25, sh * 0.25)
       ctx.strokeStyle = dark ? 'rgba(200,220,255,0.2)' : 'rgba(100,130,180,0.3)'
@@ -415,21 +527,13 @@ export default function Canvas({
       ctx.lineTo(sx + sw, sy + fold)
       ctx.stroke()
     }
-
-    if (sw > 30 && sh > 20) {
-      ctx.fillStyle = dark ? 'rgba(200,220,255,0.5)' : 'rgba(60,80,120,0.7)'
-      const baseSize = FONT_SIZE_MAP[fs]
-      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
-      ctx.textBaseline = 'top'
-      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
-    }
   }
 
   function drawLinkObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
     zoom: number, dark: boolean, _url: string, label: string, fs: FontSize,
   ) {
-    const fill = dark ? 'rgba(180,200,255,0.05)' : 'rgba(180,200,255,0.15)'
+    const fill = dark ? 'rgba(40,50,80,0.95)' : 'rgba(210,220,255,0.95)'
     ctx.fillStyle = fill
     ctx.strokeStyle = dark ? 'rgba(180,200,255,0.3)' : 'rgba(80,120,200,0.5)'
     ctx.lineWidth = 1.5
@@ -446,11 +550,15 @@ export default function Canvas({
       ctx.lineTo(sx + sw - pad, sy + sh - pad)
       ctx.stroke()
 
-      ctx.fillStyle = dark ? 'rgba(180,200,255,0.5)' : 'rgba(60,80,160,0.7)'
-      const baseSize = FONT_SIZE_MAP[fs]
-      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
-      ctx.textBaseline = 'top'
-      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
+      if (label) {
+        ctx.fillStyle = dark ? 'rgba(180,200,255,0.7)' : 'rgba(60,80,160,0.85)'
+        const baseSize = FONT_SIZE_MAP[fs]
+        const fontSize = Math.max(9, baseSize * zoom)
+        ctx.font = `${fontSize}px system-ui, sans-serif`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'top'
+        ctx.fillText(label, sx + sw / 2, sy + 10 * zoom)
+      }
     }
   }
 
@@ -459,7 +567,7 @@ export default function Canvas({
     zoom: number, dark: boolean, kind: string, label: string, fs: FontSize,
   ) {
     ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'
-    ctx.fillStyle = dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)'
+    ctx.fillStyle = dark ? 'rgba(60,60,60,0.95)' : 'rgba(230,230,230,0.95)'
     ctx.lineWidth = 1.5
 
     if (kind === 'circle') {
@@ -475,12 +583,14 @@ export default function Canvas({
       ctx.stroke()
     }
 
-    if (sw > 30 && sh > 20) {
-      ctx.fillStyle = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'
+    if (sw > 30 && sh > 20 && label) {
+      ctx.fillStyle = dark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)'
       const baseSize = FONT_SIZE_MAP[fs]
-      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
+      const fontSize = Math.max(9, baseSize * zoom)
+      ctx.font = `${fontSize}px system-ui, sans-serif`
+      ctx.textAlign = 'center'
       ctx.textBaseline = 'top'
-      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
+      ctx.fillText(label, sx + sw / 2, sy + 10 * zoom)
     }
   }
 

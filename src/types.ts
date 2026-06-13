@@ -38,6 +38,7 @@ export interface FileObject {
   height: number
   storage_key?: string
   mime_type?: string
+  content: string
   fontSize?: FontSize
 }
 

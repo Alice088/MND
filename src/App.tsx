@@ -32,7 +32,7 @@ demo.viewport = { x: -960, y: -540, zoom: 1 }
 root.objects.push({
   id: createId(),
   type: 'space',
-  name: 'unnamed space',
+  name: 'unnamed',
   x: -200,
   y: -100,
   width: 400,
@@ -165,13 +165,13 @@ export default function App() {
         case 'space': {
           const spaceId = createId()
           obj = {
-            id, type: 'space', name: 'unnamed space',
+            id, type: 'space', name: 'unnamed',
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
             targetSpaceId: spaceId,
           } as CanvasObject
           const newSpace: Space = createSpace(spaceId, currentId)
-          newSpace.name = 'unnamed space'
+          newSpace.name = 'unnamed'
           return {
             ...prev,
             [spaceId]: newSpace,
@@ -180,28 +180,28 @@ export default function App() {
         }
         case 'note':
           obj = {
-            id, type: 'note', name: '', content: '',
+            id, type: 'note', name: 'unnamed', content: '',
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
           } as NoteObject
           break
         case 'file':
           obj = {
-            id, type: 'file', name: '',
+            id, type: 'file', name: 'unnamed', content: '',
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
           } as FileObject
           break
         case 'link':
           obj = {
-            id, type: 'link', name: '', url: '',
+            id, type: 'link', name: 'unnamed', url: '',
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
           } as LinkObject
           break
         case 'shape':
           obj = {
-            id, type: 'shape', name: '',
+            id, type: 'shape', name: 'unnamed',
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
             kind: (extra?.kind as string) || 'rectangle',
