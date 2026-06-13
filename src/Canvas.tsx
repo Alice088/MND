@@ -144,21 +144,36 @@ export default function Canvas({ isDark }: CanvasProps) {
   // Theme change
   useEffect(() => { draw() }, [draw])
 
-  // === Zoom label ===
+  // === Zoom label animation ===
   const fadeTimer = useRef(0)
+  const fadeAnim = useRef(0)
 
   const showZoomLabel = useCallback((text: string) => {
-    setZoomText(text)
-    setLabelOpacity(0.15)
+    cancelAnimationFrame(fadeAnim.current)
     clearTimeout(fadeTimer.current)
 
+    setZoomText(text)
+    setLabelOpacity(0.15)
+
     fadeTimer.current = window.setTimeout(() => {
-      setLabelOpacity(0)
-    }, 1200)
+      let opacity = 0.15
+      const step = () => {
+        opacity -= 0.003
+        if (opacity <= 0) {
+          setLabelOpacity(0)
+          return
+        }
+        setLabelOpacity(opacity)
+        fadeAnim.current = requestAnimationFrame(step)
+      }
+      fadeAnim.current = requestAnimationFrame(step)
+    }, 1000)
   }, [])
 
-  // Cleanup timer
-  useEffect(() => () => clearTimeout(fadeTimer.current), [])
+  useEffect(() => () => {
+    clearTimeout(fadeTimer.current)
+    cancelAnimationFrame(fadeAnim.current)
+  }, [])
 
   // === Events ===
 
@@ -240,9 +255,7 @@ export default function Canvas({ isDark }: CanvasProps) {
 
   const onTouchEnd = useCallback(() => { touchRef.current = null }, [])
 
-  const labelColor = isDark
-    ? 'rgba(255, 255, 255, 0.15)'
-    : 'rgba(0, 0, 0, 0.15)'
+  const labelColor = isDark ? '#ffffff' : '#000000'
 
   return (
     <>
@@ -277,7 +290,6 @@ export default function Canvas({ isDark }: CanvasProps) {
           zIndex: 1000,
           fontVariantNumeric: 'tabular-nums',
           opacity: labelOpacity,
-          transition: 'opacity 1.5s ease-out',
         }}
       >
         {zoomText}
