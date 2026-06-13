@@ -1,0 +1,49 @@
+.mnd {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Hide all Excalidraw UI — only canvas remains */
+.mnd .App-menu_left,
+.mnd .App-menu_bottom,
+.mnd .App-bottom-bar,
+.mnd .footer-center,
+.mnd .layer-ui__wrapper,
+.mnd .excalidraw .FixedSideContainer,
+.mnd .excalidraw .excalidraw-canvas-buttons,
+.mnd .excalidraw .scroll-back-to-content,
+.mnd .excalidraw .disable-zen-mode,
+.mnd .excalidraw .welcome-screen-center,
+.mnd .excalidraw .help-icon,
+.mnd .excalidraw .main-menu-trigger,
+.mnd .excalidraw .collab-button,
+.mnd .excalidraw .App-top-bar,
+.mnd .excalidraw .UserList-Wrapper {
+  display: none !important;
+}
+
+/* Subtle grid overlay — sits on top of canvas, allows clicks through */
+.theme-toggle {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(128, 128, 128, 0.15);
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.theme-toggle:hover {
+  background: rgba(128, 128, 128, 0.3);
+}
