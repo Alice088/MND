@@ -1,19 +1,13 @@
 import { useState } from 'react'
-import { Excalidraw } from '@excalidraw/excalidraw'
-import '@excalidraw/excalidraw/index.css'
+import Canvas from './Canvas'
 import './App.css'
 
 function App() {
   const [isDark, setIsDark] = useState(false)
 
   return (
-    <div className="mnd">
-      <Excalidraw
-        theme={isDark ? 'dark' : 'light'}
-        viewModeEnabled
-        zenModeEnabled
-        gridModeEnabled
-      />
+    <div className={`mnd ${isDark ? 'mnd--dark' : 'mnd--light'}`}>
+      <Canvas isDark={isDark} />
       <button
         className="theme-toggle"
         onClick={() => setIsDark(d => !d)}
