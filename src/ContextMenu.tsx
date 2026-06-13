@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { computeTops, computeBaseX, computeLefts, MENU_W, ITEM_H } from './menuPosition'
 
 type ObjectType = 'space' | 'note' | 'file' | 'link' | 'shape'
 
@@ -14,61 +15,81 @@ interface Props {
 
 export type { ObjectType }
 
-const MENU_W = 170
-const ITEM_H = 32
-const HEADER_H = 22
-const LV0_FIRST = 30   // level 0: menu top → first item Y
-const LVN_FIRST = 4    // level N: menu top → first item Y
-const GAP = 8
-
 interface MenuNode {
   label: string
   children?: MenuNode[]
   action?: () => void
 }
 
+// ─── Styles ───
+
+const ease = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'
+
+const styles = {
+  level: (t: number, l: number, bg: string, border: string, hidden: boolean) => ({
+    position: 'fixed' as const,
+    top: t,
+    left: l,
+    zIndex: 2000,
+    background: bg,
+    border: `1px solid ${border}`,
+    borderRadius: 8,
+    padding: '4px 0',
+    minWidth: MENU_W,
+    boxSizing: 'border-box' as const,
+    boxShadow: '0 6px 24px rgba(0,0,0,0.25)',
+    fontSize: 13,
+    color: '#fff',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    userSelect: 'none' as const,
+    opacity: hidden ? 0 : 1,
+    animation: hidden ? 'none' : `menuAppear 0.2s ${ease}`,
+    transition: `opacity 0.2s ${ease}`,
+  }),
+  item: (hover: boolean, fg: string, hoverBg: string, depth: number) => ({
+    padding: depth > 0 ? '4px 14px 4px 24px' : '6px 14px',
+    cursor: 'pointer' as const,
+    color: fg,
+    background: hover ? hoverBg : 'transparent',
+    display: 'flex' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+    whiteSpace: 'nowrap' as const,
+    height: ITEM_H - 8,
+    lineHeight: `${ITEM_H - 8}px`,
+    transition: `background 0.12s ease`,
+  }),
+}
+
 export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onClose, isDark }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const leaveTimerRef = useRef<number | null>(null)
-
+  const exitingRef = useRef(false)
   const [openStack, setOpenStack] = useState<number[]>([])
-  const [hovered, setHovered] = useState<number[]>([])
+  const [hovered, setHovered] = useState<{ depth: number; index: number } | null>(null)
   const [exiting, setExiting] = useState(false)
-  const [revealed, setRevealed] = useState<Set<number>>(new Set([0]))
-  const prevLenRef = useRef(1)
+  const [visibleDepths, setVisibleDepths] = useState<Set<number>>(new Set([0]))
 
-  // ─── Fade-out close ───
-  const fadeOutRef = useRef(false)
+  // ─── Colors ───
+  const colors = useMemo(() => ({
+    bg: isDark ? '#1e1e1e' : '#ffffff',
+    fg: isDark ? '#ccc' : '#333',
+    border: isDark ? '#333' : '#ddd',
+    hoverBg: isDark ? '#333' : '#f0f0f0',
+    secColor: isDark ? '#888' : '#999',
+  }), [isDark])
+
+  // ─── Menu tree ───
   const fadeClose = useCallback(() => {
-    if (fadeOutRef.current) return
-    fadeOutRef.current = true
+    if (exitingRef.current) return
+    exitingRef.current = true
     setExiting(true)
+    setHovered(null)
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
     setTimeout(onClose, 400)
   }, [onClose])
 
-  // Close on click outside
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) fadeClose()
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [fadeClose])
-
-  useEffect(() => {
-    return () => {
-      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
-    }
-  }, [])
-
-  const bg = isDark ? '#1e1e1e' : '#ffffff'
-  const fg = isDark ? '#ccc' : '#333'
-  const border = isDark ? '#333' : '#ddd'
-  const hoverBg = isDark ? '#333' : '#f0f0f0'
-  const secColor = isDark ? '#888' : '#999'
-
-  const tree: MenuNode[] = [
+  const tree = useMemo<MenuNode[]>(() => [
     {
       label: 'Create',
       children: [
@@ -85,193 +106,151 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
         },
       ],
     },
-  ]
+  ], [onCreateObject, worldX, worldY, fadeClose])
 
-  // ─── Resolve tree levels from openStack ───
-  function getLevel(depth: number): { items: MenuNode[]; sel: number | null } | null {
-    let items: MenuNode[] = tree
-    for (let i = 0; i < depth; i++) {
-      const idx = openStack[i]
-      if (idx == null || idx < 0 || idx >= items.length) return null
-      const node = items[idx]
-      if (!node.children) return null
-      items = node.children
+  // ─── Resolve levels from openStack ───
+  const { totalLevels, levels, levelInfos } = useMemo(() => {
+    function getLevel(d: number): { items: MenuNode[] } | null {
+      let items: MenuNode[] = tree
+      for (let i = 0; i < d; i++) {
+        const idx = openStack[i]
+        if (idx == null || idx < 0 || idx >= items.length) return null
+        const n = items[idx]
+        if (!n.children) return null
+        items = n.children
+      }
+      return { items }
     }
-    const selIdx = depth < hovered.length ? hovered[depth] : (depth < openStack.length ? openStack[depth] : null)
-    return { items, sel: selIdx }
-  }
 
-  function countLevels(): number {
-    let items: MenuNode[] = tree
-    for (let i = 0; ; i++) {
-      const idx = openStack[i]
-      if (idx == null || idx < 0 || idx >= items.length) return i + 1
-      const node = items[idx]
-      if (!node.children) return i + 1
-      items = node.children
+    let cnt = 0
+    {
+      let items: MenuNode[] = tree
+      for (let i = 0; ; i++) {
+        const idx = openStack[i]
+        if (idx == null || idx < 0 || idx >= items.length) { cnt = i + 1; break }
+        const n = items[idx]
+        if (!n.children) { cnt = i + 1; break }
+        items = n.children
+      }
     }
-  }
 
-  const totalLevels = countLevels()
-  const levels: { depth: number; items: MenuNode[]; sel: number | null }[] = []
-  for (let d = 0; d < totalLevels; d++) {
-    const info = getLevel(d)
-    if (info) levels.push({ depth: d, ...info })
-  }
+    const raw: { depth: number; items: MenuNode[] }[] = []
+    for (let d = 0; d < cnt; d++) {
+      const info = getLevel(d)
+      if (info) raw.push({ depth: d, items: info.items })
+    }
 
-  // ─── Dimensions ───
-  function levelHeight(d: number, its: MenuNode[]): number {
-    return GAP + (d === 0 ? HEADER_H : 0) + its.length * ITEM_H + GAP
-  }
+    return {
+      totalLevels: cnt,
+      levels: raw,
+      levelInfos: raw.map(l => ({ depth: l.depth, itemCount: l.items.length })),
+    }
+  }, [tree, openStack])
 
-  // ─── Vertical: first item at cursor Y, shift as block if overflow ───
-  const idealTops: number[] = []
-  idealTops[0] = y - LV0_FIRST
-  for (let d = 1; d < totalLevels; d++) {
-    idealTops[d] = y - LVN_FIRST
-  }
+  // ─── Position: computed from ALL levels (even invisible) to prevent jumping ───
+  const visibleLevels = useMemo(() => levels.filter(l => visibleDepths.has(l.depth)), [levels, visibleDepths])
 
-  // Build actual tops with uniform shift
-  let lowestBottom = -Infinity
-  for (const { depth: d, items: its } of levels) {
-    const b = idealTops[d] + levelHeight(d, its)
-    if (b > lowestBottom) lowestBottom = b
-  }
+  const tops = useMemo(() => computeTops(y, window.innerHeight, levelInfos, openStack), [y, levelInfos, openStack])
+  const baseX = useMemo(() => computeBaseX(x, window.innerWidth, totalLevels), [x, totalLevels])
+  const lefts = useMemo(() => computeLefts(baseX, totalLevels), [baseX, totalLevels])
 
-  let shift = 0
-  const bottomLimit = window.innerHeight - GAP
-  if (lowestBottom > bottomLimit) {
-    shift = bottomLimit - lowestBottom  // negative → move up
-  }
-
-  const tops = idealTops.map(t => t + shift)
-
-  // Clamp: if level 0 top < GAP, push everything down
-  if (tops[0] < GAP) {
-    const extra = GAP - tops[0]
-    for (let i = 0; i < tops.length; i++) tops[i] += extra
-  }
-
-  // ─── Horizontal: center deepest level on cursor X ───
-  const deepestLeft = x - MENU_W / 2
-  let hShift = 0
-  if (deepestLeft + MENU_W > window.innerWidth - GAP) {
-    hShift = window.innerWidth - GAP - (deepestLeft + MENU_W)
-  }
-  if (deepestLeft + hShift < GAP) {
-    hShift = GAP - deepestLeft
-  }
-  const baseX = deepestLeft + hShift
-
-  // ─── Reveal animation ───
+  // ─── Reveal new level after a tiny delay (for animation) ───
   useEffect(() => {
-    if (levels.length > prevLenRef.current) {
-      const newLevel = levels.length - 1
-      requestAnimationFrame(() => {
-        setRevealed(prev => new Set([...prev, newLevel]))
+    const last = levels.length - 1
+    if (last >= 0 && !visibleDepths.has(last)) {
+      // Add to visible set after mount so CSS animation triggers
+      const id = requestAnimationFrame(() => {
+        setVisibleDepths(prev => new Set([...prev, last]))
       })
-    } else if (levels.length < prevLenRef.current) {
-      setRevealed(new Set([0]))
+      return () => cancelAnimationFrame(id)
     }
-    prevLenRef.current = levels.length
-  }, [levels.length])
+  }, [levels.length, visibleDepths])
 
-  // ─── Mouse enter: highlight (immediate), cancel leave timer ───
-  const handleEnter = (_depth: number, _index: number) => {
-    if (leaveTimerRef.current) {
-      clearTimeout(leaveTimerRef.current)
-      leaveTimerRef.current = null
-    }
-    setHovered(prev => {
-      const next = prev.slice(0, _depth)
-      next.push(_index)
-      return next
-    })
-  }
+  // ─── Enter: set hovered to THIS item only ───
+  const handleEnter = useCallback((depth: number, index: number) => {
+    if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null }
+    setHovered({ depth, index })
+  }, [])
 
-  // Mouse leave per-item: clear that depth and deeper
-  const handleItemLeave = (_depth: number) => {
-    setHovered(prev => {
-      if (_depth >= prev.length) return prev
-      return prev.slice(0, _depth)
-    })
-  }
+  const handleItemLeave = useCallback(() => {
+    setHovered(null)
+  }, [])
 
-  // ─── Click: open submenu or run action ───
-  const handleClick = (node: MenuNode, depth: number, index: number) => {
+  // ─── Click: open submenu or execute action ───
+  const handleClick = useCallback((node: MenuNode, depth: number, index: number) => {
     if (node.children) {
-      setOpenStack(prev => {
-        const next = prev.slice(0, depth)
-        next.push(index)
-        return next
-      })
-      setHovered(prev => {
-        const next = prev.slice(0, depth)
-        next.push(index)
+      const newStack = openStack.slice(0, depth)
+      newStack.push(index)
+      setOpenStack(newStack)
+      setHovered({ depth, index })
+      // Reset visible depths: all existing + the new one will appear via useEffect
+      setVisibleDepths(prev => {
+        const next = new Set<number>()
+        for (let d = 0; d <= depth; d++) {
+          if (prev.has(d)) next.add(d)
+        }
         return next
       })
     } else if (node.action) {
+      setHovered(null)
       node.action()
     }
-  }
+  }, [openStack])
 
-  // ─── Auto-close: 1s after cursor leaves menu zone ───
-  const handleMouseLeave = () => {
-    setHovered([])  // clear highlight immediately
+  // ─── Mouse leave menu area ───
+  const handleMouseLeave = useCallback(() => {
+    setHovered(null)
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
     leaveTimerRef.current = window.setTimeout(fadeClose, 1000)
-  }
+  }, [fadeClose])
 
-  // ─── Right-click inside menu: go up a level or close ───
-  const handleContextMenu = (e: React.MouseEvent) => {
+  // ─── Right-click: go up or close ───
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     if (openStack.length > 0) {
-      const parentStack = openStack.slice(0, -1)
-      setOpenStack(parentStack)
-      setHovered(parentStack.length > 0 ? [...parentStack] : [])
-      setRevealed(new Set([0]))
-      prevLenRef.current = 1
+      const parent = openStack.slice(0, -1)
+      setOpenStack(parent)
+      setHovered(null)
+      setVisibleDepths(new Set([0]))
     } else {
       fadeClose()
     }
-  }
+  }, [openStack, fadeClose])
 
-  const ease = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'
-  const dur = 0.3
+  // ─── Cleanup ───
+  useEffect(() => () => { if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current) }, [])
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) fadeClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [fadeClose])
+
+  // ─── Render ───
+  const isHovered = (d: number, i: number) => hovered !== null && hovered.depth === d && hovered.index === i
 
   return (
     <div
       ref={rootRef}
       onMouseLeave={handleMouseLeave}
       onContextMenu={handleContextMenu}
+      style={{ position: 'fixed', inset: 0, zIndex: 1999 }}
     >
-      {levels.map(({ depth, items, sel }) => {
-        const left = baseX + MENU_W * (depth - (totalLevels - 1))
-        const top = tops[depth] ?? 0
-        const isHidden = (depth > 0 && !revealed.has(depth)) || exiting
+      {visibleLevels.map(({ depth, items }) => {
+        const idx = levels.findIndex(l => l.depth === depth)
+        if (idx < 0) return null
+        const top = tops[idx]
+        const left = lefts[idx]
+        const hidden = exiting
 
         return (
           <div
             key={depth}
-            style={{
-              position: 'fixed',
-              left,
-              top,
-              zIndex: 2000 - depth,
-              background: bg,
-              border: `1px solid ${border}`,
-              borderRadius: 8,
-              padding: '4px 0',
-              minWidth: MENU_W,
-              boxShadow: '0 6px 24px rgba(0,0,0,0.25)',
-              fontSize: 13,
-              color: fg,
-              fontFamily: 'system-ui, -apple-system, sans-serif',
-              userSelect: 'none',
-              opacity: isHidden ? 0 : 1,
-              transition: `left ${dur}s ${ease}, opacity ${dur}s ${ease}`,
-            }}
+            style={styles.level(top, left, colors.bg, colors.border, hidden)}
           >
             {depth === 0 && (
               <div style={{
@@ -279,41 +258,24 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
                 fontSize: 10,
                 letterSpacing: '1px',
                 textTransform: 'uppercase',
-                color: secColor,
+                color: colors.secColor,
                 cursor: 'default',
               }}>
                 Sections
               </div>
             )}
-            {items.map((node, i) => {
-              const hasChildren = !!node.children
-              const isSelected = sel === i
-              const pad = depth > 0 ? '4px 14px 4px 24px' : '6px 14px'
-              return (
-                <div
-                  key={node.label}
-                  style={{
-                    padding: pad,
-                    cursor: 'pointer',
-                    color: fg,
-                    background: isSelected ? hoverBg : 'transparent',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    whiteSpace: 'nowrap',
-                    height: ITEM_H - 8,
-                    lineHeight: `${ITEM_H - 8}px`,
-                    transition: `background ${dur * 0.5}s ease`,
-                  }}
-                  onMouseEnter={() => handleEnter(depth, i)}
-                  onMouseLeave={() => handleItemLeave(depth)}
-                  onClick={() => handleClick(node, depth, i)}
-                >
-                  <span>{node.label}</span>
-                  {hasChildren && <span style={{ opacity: 0.4, fontSize: 10, marginLeft: 12 }}>▶</span>}
-                </div>
-              )
-            })}
+            {items.map((node, i) => (
+              <div
+                key={node.label}
+                style={styles.item(isHovered(depth, i), colors.fg, colors.hoverBg, depth)}
+                onMouseEnter={() => handleEnter(depth, i)}
+                onMouseLeave={handleItemLeave}
+                onClick={() => handleClick(node, depth, i)}
+              >
+                <span>{node.label}</span>
+                {node.children && <span style={{ opacity: 0.4, fontSize: 10, marginLeft: 12 }}>▶</span>}
+              </div>
+            ))}
           </div>
         )
       })}

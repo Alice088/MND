@@ -47,3 +47,8 @@
   transition: opacity 150ms ease-in-out;
   pointer-events: none;
 }
+
+@keyframes menuAppear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
