@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 
 interface CanvasProps {
   isDark: boolean
+  resetCount: number
 }
 
 const MIN_ZOOM = 0.05
@@ -33,7 +34,7 @@ function getGridIdx(zoom: number) {
   return 0
 }
 
-export default function Canvas({ isDark }: CanvasProps) {
+export default function Canvas({ isDark, resetCount }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const vpRef = useRef({ x: 0, y: 0, zoom: 1 })
   const panning = useRef(false)
@@ -143,6 +144,17 @@ export default function Canvas({ isDark }: CanvasProps) {
 
   // Theme change
   useEffect(() => { draw() }, [draw])
+
+  // Reset viewport — center on origin
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const { width: w, height: h } = canvas.getBoundingClientRect()
+    vpRef.current.x = -w / 2
+    vpRef.current.y = -h / 2
+    vpRef.current.zoom = 1
+    draw()
+  }, [resetCount, draw])
 
   // === Zoom label animation ===
   const fadeTimer = useRef(0)
