@@ -203,10 +203,10 @@ export default function Canvas({ isDark, resetCount }: CanvasProps) {
     const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, vp.zoom * factor))
 
     if (newZoom !== vp.zoom) {
-      const wx = cx / vp.zoom - vp.x
-      const wy = cy / vp.zoom - vp.y
-      vp.x = cx / newZoom - wx
-      vp.y = cy / newZoom - wy
+      const wx = cx / vp.zoom + vp.x
+      const wy = cy / vp.zoom + vp.y
+      vp.x = wx - cx / newZoom
+      vp.y = wy - cy / newZoom
       vp.zoom = newZoom
 
       showZoomLabel(`${Math.round(newZoom * 100)}%`)
