@@ -5,6 +5,14 @@
   overflow: hidden;
 }
 
+.mnd--light { color: #000000; }
+.mnd--light .control-btn { background: rgba(0,0,0,0.06); }
+.mnd--light .control-btn:hover { background: rgba(0,0,0,0.12); }
+
+.mnd--dark { color: #ffffff; }
+.mnd--dark .control-btn { background: rgba(255,255,255,0.1); }
+.mnd--dark .control-btn:hover { background: rgba(255,255,255,0.2); }
+
 .controls {
   position: fixed;
   bottom: 20px;
@@ -19,7 +27,6 @@
   height: 36px;
   border-radius: 50%;
   border: none;
-  background: rgba(128, 128, 128, 0.15);
   color: inherit;
   font-size: 16px;
   cursor: pointer;
@@ -31,7 +38,6 @@
 }
 
 .control-btn:hover {
-  background: rgba(128, 128, 128, 0.3);
 }
 
 .flash-overlay {

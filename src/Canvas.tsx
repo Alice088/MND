@@ -53,6 +53,7 @@ export default function Canvas({
   // Zoom label
   const [zoomText, setZoomText] = useState('')
   const [labelOpacity, setLabelOpacity] = useState(0)
+  const [uuidOpacity, setUuidOpacity] = useState(0)
   const fadeTimer = useRef(0)
   const fadeAnim = useRef(0)
 
@@ -60,11 +61,11 @@ export default function Canvas({
     cancelAnimationFrame(fadeAnim.current)
     clearTimeout(fadeTimer.current)
     setZoomText(text)
-    setLabelOpacity(0.15)
+    setLabelOpacity(0.5)
     fadeTimer.current = window.setTimeout(() => {
-      let op = 0.15
+      let op = 0.5
       const step = () => {
-        op -= 0.003
+        op -= 0.006
         if (op <= 0) { setLabelOpacity(0); return }
         setLabelOpacity(op)
         fadeAnim.current = requestAnimationFrame(step)
@@ -179,7 +180,7 @@ export default function Canvas({
 
   useEffect(() => { draw() }, [draw])
 
-  // Initialize viewport on mount (center on origin)
+  // Initialize viewport on mount and show UUID briefly
   const initDone = useRef(false)
   useEffect(() => {
     if (initDone.current) return
@@ -193,6 +194,19 @@ export default function Canvas({
       vpRef.current.zoom = 1
       draw()
     }
+    // Show UUID on mount, fade after 2s
+    setUuidOpacity(0.5)
+    const t = setTimeout(() => {
+      let op = 0.5
+      const step = () => {
+        op -= 0.005
+        if (op <= 0) { setUuidOpacity(0); return }
+        setUuidOpacity(op)
+        requestAnimationFrame(step)
+      }
+      requestAnimationFrame(step)
+    }, 2000)
+    return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -375,7 +389,7 @@ export default function Canvas({
           userSelect: 'none',
           zIndex: 1000,
           fontVariantNumeric: 'tabular-nums',
-          opacity: 0.15,
+          opacity: uuidOpacity,
         }}
       >
         {shortId(spaceId)}
