@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import type { CanvasObject as CanvasObjectType } from './types'
+import type { CanvasObject as CanvasObjectType, SpaceObjectDef, NoteObject, FileObject, LinkObject, ShapeObject } from './types'
 import { shortId } from './types'
 
 interface Props {
@@ -115,9 +115,8 @@ export default function Canvas({
     ctx.moveTo(cx, 0); ctx.lineTo(cx, h)
     ctx.stroke()
 
-    // Draw space objects
+    // Draw objects
     for (const obj of objects) {
-      if (obj.type !== 'space') continue
       let ox = obj.x, oy = obj.y
       const drag = dragPosRef.current
       if (drag && drag.id === obj.id) { ox = drag.x; oy = drag.y }
@@ -127,25 +126,26 @@ export default function Canvas({
       const sh = obj.height * vp.zoom
       if (sx + sw < 0 || sx > w || sy + sh < 0 || sy > h) continue
 
-      // Rect
-      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'
-      ctx.fillStyle = dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      if (ctx.roundRect) {
-        ctx.roundRect(sx, sy, sw, sh, 3 * vp.zoom)
-      } else {
-        ctx.rect(sx, sy, sw, sh)
-      }
-      ctx.fill()
-      ctx.stroke()
+      const label = obj.name || shortId(obj.id)
 
-      // Name label
-      if (sw > 40 && sh > 20) {
-        ctx.fillStyle = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'
-        ctx.font = `${Math.max(10, 12 * vp.zoom)}px system-ui, sans-serif`
-        ctx.textBaseline = 'top'
-        ctx.fillText(shortId(obj.targetSpaceId!), sx + 8 * vp.zoom, sy + 8 * vp.zoom)
+      switch (obj.type) {
+        case 'space':
+          drawSpaceObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as SpaceObjectDef).targetSpaceId, label)
+          break
+        case 'note':
+          drawNoteObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as NoteObject).content, label)
+          break
+        case 'file':
+          drawFileObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as FileObject).mime_type, label)
+          break
+        case 'link':
+          drawLinkObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as LinkObject).url, label)
+          break
+        case 'shape': {
+          const kind = (obj as ShapeObject).kind
+          drawShapeObject(ctx, sx, sy, sw, sh, vp.zoom, dark, kind, label)
+          break
+        }
       }
     }
   }, [isDark, objects])
@@ -164,6 +164,163 @@ export default function Canvas({
     for (let x = ox; x <= w; x += gs) { ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, h) }
     for (let y = oy; y <= h; y += gs) { ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(w, Math.round(y) + 0.5) }
     ctx.stroke()
+  }
+
+  // ─── Object drawing helpers ───
+
+  function drawRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    ctx.beginPath()
+    if (ctx.roundRect) {
+      ctx.roundRect(x, y, w, h, Math.max(0, r))
+    } else {
+      ctx.rect(x, y, w, h)
+    }
+  }
+
+  function drawSpaceObject(
+    ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
+    zoom: number, dark: boolean, _targetId: string, label: string,
+  ) {
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'
+    ctx.fillStyle = dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'
+    ctx.lineWidth = 1.5
+    drawRect(ctx, sx, sy, sw, sh, 3 * zoom)
+    ctx.fill()
+    ctx.stroke()
+    if (sw > 40 && sh > 20) {
+      ctx.fillStyle = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'
+      ctx.font = `${Math.max(10, 12 * zoom)}px system-ui, sans-serif`
+      ctx.textBaseline = 'top'
+      ctx.fillText(label, sx + 8 * zoom, sy + 8 * zoom)
+    }
+  }
+
+  function drawNoteObject(
+    ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
+    zoom: number, dark: boolean, _content: string, label: string,
+  ) {
+    // Paper-like filled rect with folded corner
+    const fill = dark ? 'rgba(255,255,220,0.08)' : 'rgba(255,255,200,0.25)'
+    ctx.fillStyle = fill
+    ctx.strokeStyle = dark ? 'rgba(255,255,220,0.3)' : 'rgba(180,180,120,0.5)'
+    ctx.lineWidth = 1.5
+    drawRect(ctx, sx, sy, sw, sh, 2 * zoom)
+    ctx.fill()
+    ctx.stroke()
+
+    // Text lines hint
+    if (sw > 50 && sh > 40) {
+      ctx.strokeStyle = dark ? 'rgba(255,255,220,0.15)' : 'rgba(120,120,80,0.25)'
+      ctx.lineWidth = 1
+      const pad = 8 * zoom
+      const lineH = Math.max(6, 10 * zoom)
+      for (let i = 0; i < 3; i++) {
+        const ly = sy + pad + (i + 1) * lineH
+        if (ly > sy + sh - pad) break
+        ctx.beginPath()
+        ctx.moveTo(sx + pad, ly)
+        ctx.lineTo(sx + sw - pad - (i === 0 ? 20 * zoom : 0), ly)
+        ctx.stroke()
+      }
+    }
+
+    // Label
+    if (sw > 30 && sh > 20) {
+      ctx.fillStyle = dark ? 'rgba(255,255,220,0.5)' : 'rgba(80,80,50,0.7)'
+      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      ctx.textBaseline = 'top'
+      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
+    }
+  }
+
+  function drawFileObject(
+    ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
+    zoom: number, dark: boolean, _mime: string | undefined, label: string,
+  ) {
+    const fill = dark ? 'rgba(200,220,255,0.06)' : 'rgba(200,220,255,0.2)'
+    ctx.fillStyle = fill
+    ctx.strokeStyle = dark ? 'rgba(200,220,255,0.3)' : 'rgba(100,130,180,0.5)'
+    ctx.lineWidth = 1.5
+    drawRect(ctx, sx, sy, sw, sh, 2 * zoom)
+    ctx.fill()
+    ctx.stroke()
+
+    // Fold corner hint
+    if (sw > 30 && sh > 30) {
+      const fold = Math.min(20 * zoom, sw * 0.25, sh * 0.25)
+      ctx.strokeStyle = dark ? 'rgba(200,220,255,0.2)' : 'rgba(100,130,180,0.3)'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(sx + sw - fold, sy)
+      ctx.lineTo(sx + sw - fold, sy + fold)
+      ctx.lineTo(sx + sw, sy + fold)
+      ctx.stroke()
+    }
+
+    if (sw > 30 && sh > 20) {
+      ctx.fillStyle = dark ? 'rgba(200,220,255,0.5)' : 'rgba(60,80,120,0.7)'
+      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      ctx.textBaseline = 'top'
+      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
+    }
+  }
+
+  function drawLinkObject(
+    ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
+    zoom: number, dark: boolean, _url: string, label: string,
+  ) {
+    const fill = dark ? 'rgba(180,200,255,0.05)' : 'rgba(180,200,255,0.15)'
+    ctx.fillStyle = fill
+    ctx.strokeStyle = dark ? 'rgba(180,200,255,0.3)' : 'rgba(80,120,200,0.5)'
+    ctx.lineWidth = 1.5
+    drawRect(ctx, sx, sy, sw, sh, 4 * zoom)
+    ctx.fill()
+    ctx.stroke()
+
+    // Underline hint
+    if (sw > 40 && sh > 30) {
+      ctx.strokeStyle = dark ? 'rgba(180,200,255,0.2)' : 'rgba(80,120,200,0.35)'
+      ctx.lineWidth = 1
+      const pad = 8 * zoom
+      ctx.beginPath()
+      ctx.moveTo(sx + pad, sy + sh - pad)
+      ctx.lineTo(sx + sw - pad, sy + sh - pad)
+      ctx.stroke()
+
+      ctx.fillStyle = dark ? 'rgba(180,200,255,0.5)' : 'rgba(60,80,160,0.7)'
+      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      ctx.textBaseline = 'top'
+      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
+    }
+  }
+
+  function drawShapeObject(
+    ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
+    zoom: number, dark: boolean, kind: string, label: string,
+  ) {
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'
+    ctx.fillStyle = dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)'
+    ctx.lineWidth = 1.5
+
+    if (kind === 'circle') {
+      const cx2 = sx + sw / 2, cy2 = sy + sh / 2
+      const rx = sw / 2, ry = sh / 2
+      ctx.beginPath()
+      ctx.ellipse(cx2, cy2, rx, ry, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    } else {
+      drawRect(ctx, sx, sy, sw, sh, 0)
+      ctx.fill()
+      ctx.stroke()
+    }
+
+    if (sw > 30 && sh > 20) {
+      ctx.fillStyle = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'
+      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      ctx.textBaseline = 'top'
+      ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
+    }
   }
 
   // Resize
@@ -241,10 +398,9 @@ export default function Canvas({
     const wx = mx / vp.zoom + vp.x
     const wy = my / vp.zoom + vp.y
 
-    // Check click on space object → start drag
+    // Check click on any object → start drag
     for (const obj of objects) {
-      if (obj.type === 'space' &&
-          wx >= obj.x && wx <= obj.x + obj.width &&
+      if (wx >= obj.x && wx <= obj.x + obj.width &&
           wy >= obj.y && wy <= obj.y + obj.height) {
         dragRef.current = {
           objId: obj.id,
@@ -316,7 +472,7 @@ export default function Canvas({
       if (obj.type === 'space' &&
           wx >= obj.x && wx <= obj.x + obj.width &&
           wy >= obj.y && wy <= obj.y + obj.height) {
-        onEnterSpace(obj.targetSpaceId, obj, { x: vp.x, y: vp.y, zoom: vp.zoom })
+        onEnterSpace((obj as any).targetSpaceId, obj, { x: vp.x, y: vp.y, zoom: vp.zoom })
         return
       }
     }

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import type { Space, CanvasObject } from './types'
+import type { Space, CanvasObject, NoteObject, FileObject, LinkObject, ShapeObject } from './types'
 import { createId, shortId } from './types'
 import Canvas from './Canvas'
 import ContextMenu from './ContextMenu'
@@ -75,11 +75,10 @@ export default function App() {
 
   // Enter space
   const handleEnterSpace = useCallback((
-    _targetId: string,
-    obj: CanvasObject,
+    targetId: string,
+    _obj: CanvasObject,
     currentVp: { x: number; y: number; zoom: number },
   ) => {
-    const targetId = obj.targetSpaceId
     flashTransition(() => {
       setNavStack(prev => [...prev, { spaceId: currentId, viewport: currentVp }])
       setCurrentId(targetId)
@@ -117,27 +116,79 @@ export default function App() {
     }))
   }, [currentId])
 
-  // Create child space
-  const createChildSpace = useCallback((worldX: number, worldY: number) => {
-    const id = createId()
-    const obj: CanvasObject = {
-      id: createId(),
-      type: 'space',
-      name: shortId(id),
-      x: worldX - 200,
-      y: worldY - 150,
-      width: 400,
-      height: 300,
-      targetSpaceId: id,
-    }
-    setSpaces(prev => ({
-      ...prev,
-      [id]: createSpace(id, currentId),
-      [currentId]: {
-        ...prev[currentId],
-        objects: [...prev[currentId].objects, obj],
-      },
-    }))
+  // Create object (from context menu)
+  const handleCreateObject = useCallback((
+    type: 'space' | 'note' | 'file' | 'link' | 'shape',
+    worldX: number, worldY: number,
+    extra?: Record<string, unknown>,
+  ) => {
+    setSpaces(prev => {
+      const space = prev[currentId]
+      const defSize = (() => {
+        switch (type) {
+          case 'space': return { w: 400, h: 300 }
+          case 'note': return { w: 200, h: 160 }
+          case 'file': return { w: 220, h: 180 }
+          case 'link': return { w: 200, h: 120 }
+          case 'shape': return { w: 160, h: 160 }
+        }
+      })()
+
+      const id = createId()
+      let obj: CanvasObject
+
+      switch (type) {
+        case 'space': {
+          const spaceId = createId()
+          obj = {
+            id, type: 'space', name: shortId(spaceId),
+            x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
+            width: defSize.w, height: defSize.h,
+            targetSpaceId: spaceId,
+          } as CanvasObject
+          const newSpace: Space = createSpace(spaceId, currentId)
+          return {
+            ...prev,
+            [spaceId]: newSpace,
+            [currentId]: { ...space, objects: [...space.objects, obj] },
+          }
+        }
+        case 'note':
+          obj = {
+            id, type: 'note', name: '', content: '',
+            x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
+            width: defSize.w, height: defSize.h,
+          } as NoteObject
+          break
+        case 'file':
+          obj = {
+            id, type: 'file', name: '',
+            x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
+            width: defSize.w, height: defSize.h,
+          } as FileObject
+          break
+        case 'link':
+          obj = {
+            id, type: 'link', name: '', url: '',
+            x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
+            width: defSize.w, height: defSize.h,
+          } as LinkObject
+          break
+        case 'shape':
+          obj = {
+            id, type: 'shape', name: '',
+            x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
+            width: defSize.w, height: defSize.h,
+            kind: (extra?.kind as string) || 'rectangle',
+          } as ShapeObject
+          break
+      }
+
+      return {
+        ...prev,
+        [currentId]: { ...space, objects: [...space.objects, obj] },
+      }
+    })
   }, [currentId])
 
   const handleContextMenu = useCallback((worldX: number, worldY: number, screenX: number, screenY: number) => {
@@ -175,7 +226,7 @@ export default function App() {
           y={contextMenu.y}
           worldX={contextMenu.worldX}
           worldY={contextMenu.worldY}
-          onCreateSpace={createChildSpace}
+          onCreateObject={handleCreateObject}
           onClose={closeContextMenu}
           isDark={isDark}
         />
