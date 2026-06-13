@@ -19,6 +19,10 @@ interface Props {
   onContextMenu?: (worldX: number, worldY: number, screenX: number, screenY: number) => void
   pendingEditId?: string | null
   onPendingEditClear?: () => void
+  pendingBodyEditId?: string | null
+  onPendingBodyEditClear?: () => void
+  onBodyEdit?: (objectId: string, content: string) => void
+  onDeleteObject?: (objectId: string) => void
 }
 
 const MIN_ZOOM = 0.05
@@ -74,7 +78,8 @@ function cursorForEdges(e: Edges): string {
 export default function Canvas({
   isDark, path, objects, onEnterSpace, onGoBack, onUpdateObject,
   onResizeObject, onRenameObject, onFontSizeChange, onContextMenu: onCtx,
-  pendingEditId, onPendingEditClear,
+  pendingEditId, onPendingEditClear, onBodyEdit,
+  pendingBodyEditId, onPendingBodyEditClear, onDeleteObject,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const vpRef = useRef({ x: 0, y: 0, zoom: 1 })
@@ -120,6 +125,11 @@ export default function Canvas({
   const [editText, setEditText] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Inline body editing
+  const [editingBody, setEditingBody] = useState<string | null>(null)
+  const [editBodyText, setEditBodyText] = useState('')
+  const bodyInputRef = useRef<HTMLTextAreaElement>(null)
+
   // Zoom label
   const [zoomText, setZoomText] = useState('')
   const [labelOpacity, setLabelOpacity] = useState(0)
@@ -153,12 +163,44 @@ export default function Canvas({
     }
   }, [pendingEditId, onPendingEditClear])
 
+  // ─── Handle pendingBodyEditId (new note creation) ───
+  useEffect(() => {
+    if (pendingBodyEditId) {
+      setSelectedId(pendingBodyEditId)
+      setEditingBody(pendingBodyEditId)
+      setEditBodyText('')
+      onPendingBodyEditClear?.()
+    }
+  }, [pendingBodyEditId, onPendingBodyEditClear])
+
   // Focus input when editing starts
   useEffect(() => {
     if (editingId && inputRef.current) {
       inputRef.current.focus()
     }
   }, [editingId])
+
+  // Focus body textarea
+  useEffect(() => {
+    if (editingBody && bodyInputRef.current) {
+      bodyInputRef.current.focus()
+    }
+  }, [editingBody])
+
+  // Clear body edit when name edit starts or selection changes
+  useEffect(() => {
+    if (editingId || !selectedId) {
+      setEditingBody(null)
+    }
+  }, [editingId, selectedId])
+
+  const commitBodyEdit = useCallback(() => {
+    if (editingBody && onBodyEdit) {
+      onBodyEdit(editingBody, editBodyText)
+    }
+    setEditingBody(null)
+    setEditBodyText('')
+  }, [editingBody, editBodyText, onBodyEdit])
 
   // ─── Draw ───
   const draw = useCallback(() => {
@@ -427,22 +469,6 @@ export default function Canvas({
         }
       }
     }
-
-    // Small line decorations (existing style hint)
-    if (sw > 50 && sh > 40) {
-      ctx.strokeStyle = dark ? 'rgba(255,255,220,0.08)' : 'rgba(120,120,80,0.12)'
-      ctx.lineWidth = 1
-      const pad = 8 * zoom
-      const lineH2 = Math.max(6, 10 * zoom)
-      for (let i = 0; i < 3; i++) {
-        const ly = sy + pad + (i + 1) * lineH2
-        if (ly > sy + sh - pad) break
-        ctx.beginPath()
-        ctx.moveTo(sx + pad, ly)
-        ctx.lineTo(sx + sw - pad - (i === 0 ? 20 * zoom : 0), ly)
-        ctx.stroke()
-      }
-    }
   }
 
   function drawFileObject(
@@ -515,18 +541,6 @@ export default function Canvas({
         }
       }
     }
-
-    // Corner fold decoration (existing style hint)
-    if (sw > 30 && sh > 30) {
-      const fold = Math.min(20 * zoom, sw * 0.25, sh * 0.25)
-      ctx.strokeStyle = dark ? 'rgba(200,220,255,0.2)' : 'rgba(100,130,180,0.3)'
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.moveTo(sx + sw - fold, sy)
-      ctx.lineTo(sx + sw - fold, sy + fold)
-      ctx.lineTo(sx + sw, sy + fold)
-      ctx.stroke()
-    }
   }
 
   function drawLinkObject(
@@ -542,14 +556,6 @@ export default function Canvas({
     ctx.stroke()
 
     if (sw > 40 && sh > 30) {
-      ctx.strokeStyle = dark ? 'rgba(180,200,255,0.2)' : 'rgba(80,120,200,0.35)'
-      ctx.lineWidth = 1
-      const pad = 8 * zoom
-      ctx.beginPath()
-      ctx.moveTo(sx + pad, sy + sh - pad)
-      ctx.lineTo(sx + sw - pad, sy + sh - pad)
-      ctx.stroke()
-
       if (label) {
         ctx.fillStyle = dark ? 'rgba(180,200,255,0.7)' : 'rgba(60,80,160,0.85)'
         const baseSize = FONT_SIZE_MAP[fs]
@@ -636,18 +642,27 @@ export default function Canvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Keyboard: Escape → go back
+  // Keyboard: Escape → go back, Delete/Backspace → delete selected
   useEffect(() => {
-    if (path.length <= 1) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !editingId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !editingId && !editingBody) {
+        if (selectedId && onDeleteObject) {
+          e.preventDefault()
+          onDeleteObject(selectedId)
+          setSelectedId(null)
+          setEditingId(null)
+          setEditingBody(null)
+          return
+        }
+      }
+      if (e.key === 'Escape' && path.length > 1 && !editingId && !editingBody) {
         e.preventDefault()
         onGoBack()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [path, editingId, onGoBack])
+  }, [path, editingId, editingBody, selectedId, onGoBack, onDeleteObject])
 
   // === Wheel zoom ===
   const onWheel = useCallback((e: React.WheelEvent) => {
@@ -889,6 +904,7 @@ export default function Canvas({
   const selectedObj = selectedId ? objects.find(o => o.id === selectedId) : null
   let toolStyle: React.CSSProperties | undefined
   let editStyle: React.CSSProperties | undefined
+  let bodyEditStyle: React.CSSProperties | undefined
   // moveVersion forces re-render on drag/resize to update positions
   void moveVersion
   if (canvasRef.current && selectedObj) {
@@ -950,6 +966,35 @@ export default function Canvas({
         zIndex: 1100,
         padding: 0,
         margin: 0,
+      }
+    }
+
+    // Body edit textarea
+    if (editingBody) {
+      const headerH = Math.max(22, 22 * vp.zoom)
+      const bodyPad = 6 * vp.zoom
+      bodyEditStyle = {
+        position: 'fixed' as const,
+        left: sx + bodyPad,
+        top: sy + headerH + bodyPad,
+        width: sw - bodyPad * 2,
+        height: selectedObj.height * vp.zoom - headerH - bodyPad * 2,
+        minHeight: 40,
+        background: 'transparent',
+        border: 'none',
+        outline: 'none',
+        color: isDark ? 'rgba(210,220,240,0.85)' : 'rgba(40,50,80,0.85)',
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: Math.max(8, 11 * vp.zoom),
+        lineHeight: 1.45,
+        textAlign: 'left',
+        zIndex: 1100,
+        padding: 0,
+        margin: 0,
+        resize: 'none' as const,
+        overflow: 'hidden',
+        whiteSpace: 'pre-wrap' as const,
+        wordWrap: 'break-word' as const,
       }
     }
   }
@@ -1045,6 +1090,27 @@ export default function Canvas({
           >
             ✏
           </button>
+          {(selectedObj.type === 'note' || selectedObj.type === 'file') && (
+            <button
+              onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+              onClick={() => {
+                setEditingBody(selectedObj.id)
+                setEditBodyText((selectedObj as any).content || '')
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 4,
+                padding: '3px 6px',
+                cursor: 'pointer',
+                color: isDark ? '#ccc' : '#333',
+                fontSize: 12,
+                fontFamily: 'inherit',
+              }}
+            >
+              📄
+            </button>
+          )}
         </div>
       )}
 
@@ -1067,6 +1133,28 @@ export default function Canvas({
           onBlur={commitEdit}
           placeholder="Type name..."
           style={editStyle}
+        />
+      )}
+
+      {/* Body edit textarea */}
+      {bodyEditStyle && (
+        <textarea
+          ref={bodyInputRef}
+          value={editBodyText}
+          onChange={(e) => setEditBodyText(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Escape') {
+              setEditingBody(null)
+              setEditBodyText('')
+            }
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              commitBodyEdit()
+            }
+          }}
+          onBlur={commitBodyEdit}
+          placeholder="Type markdown..."
+          style={bodyEditStyle}
         />
       )}
 

@@ -52,3 +52,76 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* Workspace menu */
+.workspace-menu {
+  position: fixed;
+  bottom: 60px;
+  right: 20px;
+  z-index: 2000;
+  background: var(--ws-bg, #1e1e1e);
+  border: 1px solid var(--ws-border, #333);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 180px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  user-select: none;
+  overflow: hidden;
+}
+
+.mnd--light .workspace-menu {
+  --ws-bg: #ffffff;
+  --ws-border: #ddd;
+}
+
+.mnd--dark .workspace-menu {
+  --ws-bg: #1e1e1e;
+  --ws-border: #333;
+}
+
+.workspace-menu__header {
+  padding: 4px 14px 6px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ws-dim, #888);
+  cursor: default;
+}
+
+.mnd--light .workspace-menu__header { color: #999; }
+.mnd--dark .workspace-menu__header { color: #888; }
+
+.workspace-menu__item {
+  padding: 6px 14px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--ws-fg, #ccc);
+  transition: background 0.1s;
+}
+
+.mnd--light .workspace-menu__item { color: #333; }
+.mnd--dark .workspace-menu__item { color: #ccc; }
+
+.workspace-menu__item:hover {
+  background: var(--ws-hover, #333);
+}
+
+.mnd--light .workspace-menu__item:hover { background: #f0f0f0; }
+.mnd--dark .workspace-menu__item:hover { background: #333; }
+
+.workspace-menu__item--active {
+  font-weight: 600;
+}
+
+.workspace-menu__item--new {
+  border-top: 1px solid var(--ws-border, #333);
+  margin-top: 2px;
+  color: var(--ws-new, #6af);
+}
+
+.mnd--dark .workspace-menu__item--new { color: #6af; }
+.mnd--light .workspace-menu__item--new { color: #07c; }
