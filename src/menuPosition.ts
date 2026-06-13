@@ -8,6 +8,8 @@ export const HEADER_H = 22
 export const LV0_FIRST = 30  // level 0: menu top → first item Y offset (header)
 export const LVN_FIRST = 4   // level N: menu top → first item Y offset (no header)
 export const GAP = 8
+export const MENU_X_OFFSET = -12  // shift menu left so cursor lands inside, not on edge
+export const MENU_Y_OFFSET = -6   // shift menu up so cursor lands on first item
 
 export interface LevelInfo {
   depth: number
@@ -40,13 +42,13 @@ export function computeTops(
 
   const ideal: number[] = []
 
-  // Level 0: first item at cursor Y
-  ideal[0] = cursorY - LV0_FIRST
+  // Level 0: first item slightly above cursor Y (MENU_Y_OFFSET)
+  ideal[0] = cursorY - LV0_FIRST + MENU_Y_OFFSET
 
   // Level N: first item at click Y that opened this level
   for (let d = 1; d < N; d++) {
     const clickY = clickYs[d] ?? cursorY
-    ideal[d] = clickY - LVN_FIRST
+    ideal[d] = clickY - LVN_FIRST + MENU_Y_OFFSET
   }
 
   // Uniform shift to fit viewport
@@ -109,7 +111,7 @@ export function computeBaseX(
   const deepestClickX = clickXs[deepestIdx] ?? cursorX
 
   // Level 0 left = deepestClickX - deepestIdx * MENU_W
-  let base = deepestClickX - deepestIdx * MENU_W
+  let base = deepestClickX - deepestIdx * MENU_W + MENU_X_OFFSET
 
   // Clamp to viewport
   const maxBase = vpW - GAP - totalLevels * MENU_W

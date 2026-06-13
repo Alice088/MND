@@ -17,24 +17,24 @@ describe('levelHeight', () => {
 // ─── Vertical: each level first item at its click Y ───
 
 describe('computeTops: first item at click Y', () => {
-  it('1 level, cursor 400', () => {
+  it('1 level, cursor 400 → first item 6px above cursor', () => {
     const tops = computeTops(400, 720, [lv(0, 1)], [400])
-    expect(firstItemY(tops, [0])[0]).toBe(400)
+    expect(firstItemY(tops, [0])[0]).toBe(394)
   })
 
   it('2 levels: level 0 at 400, level 1 at 400 (same click)', () => {
     const tops = computeTops(400, 720, [lv(0, 1), lv(1, 5)], [400, 400])
     const fys = firstItemY(tops, [0, 1])
-    expect(fys[0]).toBe(400)
-    expect(fys[1]).toBe(400)
+    expect(fys[0]).toBe(394)
+    expect(fys[1]).toBe(394)
   })
 
-  it('3 levels: level 0 at 400, level 1 at 400, level 2 at 528', () => {
+  it('3 levels: level 0 at 400, level 1 at 400, level 2 at 528 → 6px above each clickY', () => {
     const tops = computeTops(400, 720, [lv(0, 1), lv(1, 5), lv(1, 2)], [400, 400, 528])
     const fys = firstItemY(tops, [0, 1, 1])
-    expect(fys[0]).toBe(400)
-    expect(fys[1]).toBe(400)
-    expect(fys[2]).toBe(528)
+    expect(fys[0]).toBe(394)
+    expect(fys[1]).toBe(394)
+    expect(fys[2]).toBe(522)
   })
 })
 
@@ -62,24 +62,25 @@ describe('computeTops: uniform viewport clamp', () => {
 // ─── Horizontal: deepest level left edge at its clickX ───
 
 describe('computeBaseX: deepest level at its clickX', () => {
-  it('1 level → base = cursorX', () => {
-    expect(computeBaseX(500, 1200, 1, [500])).toBe(500)
+  it('1 level → base = cursorX - 12', () => {
+    // MENU_X_OFFSET = -12 shifts left
+    expect(computeBaseX(500, 1200, 1, [500])).toBe(488)
   })
 
   it('2 levels → level 1 at its clickX (800)', () => {
     // deepestIdx=1, deepestClickX=800
-    // base = 800 - 1*170 = 630
+    // base = 800 - 1*170 - 12 = 618
     const bx = computeBaseX(500, 1200, 2, [500, 800])
-    expect(bx).toBe(630)
-    // level 1 left = 630 + 170 = 800 ✓
+    expect(bx).toBe(618)
+    // level 1 left = 618 + 170 = 788
   })
 
   it('3 levels → level 2 at its clickX (960)', () => {
     // deepestIdx=2, deepestClickX=960
-    // base = 960 - 2*170 = 620
+    // base = 960 - 2*170 - 12 = 608
     const bx = computeBaseX(500, 1200, 3, [500, 670, 960])
-    expect(bx).toBe(620)
-    // level 1 = 620+170 = 790, level 2 = 620+340 = 960 ✓
+    expect(bx).toBe(608)
+    // level 1 = 608+170 = 778, level 2 = 608+340 = 948
   })
 
   it('overflow right: clamp', () => {
