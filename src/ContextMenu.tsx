@@ -32,7 +32,7 @@ interface StackEntry {
 const ease = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'
 
 const styles = {
-  level: (t: number, l: number, bg: string, border: string, hidden: boolean) => ({
+  level: (t: number, l: number, bg: string, border: string, op: number) => ({
     position: 'fixed' as const,
     top: t,
     left: l,
@@ -48,9 +48,8 @@ const styles = {
     color: '#fff',
     fontFamily: 'system-ui, -apple-system, sans-serif',
     userSelect: 'none' as const,
-    opacity: hidden ? 0 : 1,
-    animation: hidden ? 'none' : `menuAppear 0.2s ${ease}`,
-    transition: `opacity 0.2s ${ease}`,
+    opacity: op,
+    animation: op < 1 ? 'none' : `menuAppear 0.2s ${ease}`,
   }),
   item: (hover: boolean, fg: string, hoverBg: string) => ({
     padding: '4px 14px',
@@ -70,10 +69,10 @@ const styles = {
 export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onClose, isDark }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const leaveTimerRef = useRef<number | null>(null)
-  const exitingRef = useRef(false)
+  const exitAnimRef = useRef(0)
   const [openStack, setOpenStack] = useState<StackEntry[]>([])
   const [hovered, setHovered] = useState<{ depth: number; index: number } | null>(null)
-  const [exiting, setExiting] = useState(false)
+  const [exitOpacity, setExitOpacity] = useState(1)
   const [visibleDepths, setVisibleDepths] = useState<Set<number>>(new Set([0]))
 
   // ─── Colors ───
@@ -85,14 +84,19 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     secColor: isDark ? '#888' : '#999',
   }), [isDark])
 
-  // ─── Menu tree ───
+  // ─── Fade out (rAF, same technique as zoom label) ───
   const fadeClose = useCallback(() => {
-    if (exitingRef.current) return
-    exitingRef.current = true
-    setExiting(true)
+    if (exitAnimRef.current) return // already fading
     setHovered(null)
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
-    setTimeout(onClose, 400)
+    let op = 1
+    const step = () => {
+      op -= 0.03
+      if (op <= 0) { setExitOpacity(0); onClose(); return }
+      setExitOpacity(op)
+      exitAnimRef.current = requestAnimationFrame(step)
+    }
+    exitAnimRef.current = requestAnimationFrame(step)
   }, [onClose])
 
   const tree = useMemo<MenuNode[]>(() => [
@@ -165,11 +169,20 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     }
   }, [levels.length, visibleDepths])
 
+  // ─── Per-level mouse enter/leave for auto-close ───
+  const handleLevelEnter = useCallback(() => {
+    if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null }
+  }, [])
+
+  const handleLevelLeave = useCallback(() => {
+    leaveTimerRef.current = window.setTimeout(fadeClose, 1000)
+  }, [fadeClose])
+
   // ─── Enter: set hovered to THIS item only ───
   const handleEnter = useCallback((depth: number, index: number) => {
-    if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null }
+    handleLevelEnter()
     setHovered({ depth, index })
-  }, [])
+  }, [handleLevelEnter])
 
   const handleItemLeave = useCallback(() => {
     setHovered(null)
@@ -197,13 +210,6 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     }
   }, [openStack])
 
-  // ─── Mouse leave menu area ───
-  const handleMouseLeave = useCallback(() => {
-    setHovered(null)
-    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
-    leaveTimerRef.current = window.setTimeout(fadeClose, 1000)
-  }, [fadeClose])
-
   // ─── Right-click: go up or close ───
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -219,13 +225,16 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   }, [openStack, fadeClose])
 
   // ─── Cleanup ───
-  useEffect(() => () => { if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current) }, [])
+  useEffect(() => () => {
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+    cancelAnimationFrame(exitAnimRef.current)
+  }, [])
 
   // Close on outside click
+  // Menu levels stop propagation via onMouseDown, so any mousedown reaching
+  // document means it's outside the menu.
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) fadeClose()
-    }
+    const handler = () => fadeClose()
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [fadeClose])
@@ -236,7 +245,6 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   return (
     <div
       ref={rootRef}
-      onMouseLeave={handleMouseLeave}
       onContextMenu={handleContextMenu}
       style={{ position: 'fixed', inset: 0, zIndex: 1999 }}
     >
@@ -245,12 +253,14 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
         if (idx < 0) return null
         const top = tops[idx]
         const left = lefts[idx]
-        const hidden = exiting
 
         return (
           <div
             key={depth}
-            style={styles.level(top, left, colors.bg, colors.border, hidden)}
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseEnter={handleLevelEnter}
+            onMouseLeave={handleLevelLeave}
+            style={styles.level(top, left, colors.bg, colors.border, exitOpacity)}
           >
             {depth === 0 && (
               <div style={{
