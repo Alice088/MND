@@ -67,7 +67,6 @@ const styles = {
 }
 
 export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onClose, isDark }: Props) {
-  const rootRef = useRef<HTMLDivElement>(null)
   const leaveTimerRef = useRef<number | null>(null)
   const exitAnimRef = useRef(0)
   const [openStack, setOpenStack] = useState<StackEntry[]>([])
@@ -243,11 +242,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
   const isHovered = (d: number, i: number) => hovered !== null && hovered.depth === d && hovered.index === i
 
   return (
-    <div
-      ref={rootRef}
-      onContextMenu={handleContextMenu}
-      style={{ position: 'fixed', inset: 0, zIndex: 1999 }}
-    >
+    <>
       {visibleLevels.map(({ depth, items }) => {
         const idx = levels.findIndex(l => l.depth === depth)
         if (idx < 0) return null
@@ -260,6 +255,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
             onMouseDown={(e) => e.stopPropagation()}
             onMouseEnter={handleLevelEnter}
             onMouseLeave={handleLevelLeave}
+            onContextMenu={handleContextMenu}
             style={styles.level(top, left, colors.bg, colors.border, exitOpacity)}
           >
             {depth === 0 && (
@@ -289,6 +285,6 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
           </div>
         )
       })}
-    </div>
+    </>
   )
 }
