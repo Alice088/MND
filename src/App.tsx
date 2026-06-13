@@ -57,6 +57,9 @@ export default function App() {
   // Flash transition state
   const [flashVisible, setFlashVisible] = useState(false)
 
+  // Object to auto-select+edit after creation
+  const [pendingEditId, setPendingEditId] = useState<string | null>(null)
+
   const currentSpace = spaces[currentId]
   const isRoot = currentId === ROOT_ID
 
@@ -135,6 +138,8 @@ export default function App() {
     worldX: number, worldY: number,
     extra?: Record<string, unknown>,
   ) => {
+    const id = createId()
+
     setSpaces(prev => {
       const space = prev[currentId]
       const defSize = (() => {
@@ -147,15 +152,13 @@ export default function App() {
         }
       })()
 
-      const id = createId()
       let obj: CanvasObject
 
       switch (type) {
         case 'space': {
           const spaceId = createId()
-          const objName = (extra?.name as string) || shortId(spaceId)
           obj = {
-            id, type: 'space', name: objName,
+            id, type: 'space', name: '',
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
             targetSpaceId: spaceId,
@@ -203,6 +206,35 @@ export default function App() {
         [currentId]: { ...space, objects: [...space.objects, obj] },
       }
     })
+
+    // Signal Canvas to select+edit new space
+    if (type === 'space') {
+      setPendingEditId(id)
+    }
+  }, [currentId])
+
+  const handleRenameObject = useCallback((objectId: string, name: string) => {
+    setSpaces(prev => ({
+      ...prev,
+      [currentId]: {
+        ...prev[currentId],
+        objects: prev[currentId].objects.map(o =>
+          o.id === objectId ? { ...o, name } : o
+        ),
+      },
+    }))
+  }, [currentId])
+
+  const handleFontSizeChange = useCallback((objectId: string, fontSize: import('./types').FontSize) => {
+    setSpaces(prev => ({
+      ...prev,
+      [currentId]: {
+        ...prev[currentId],
+        objects: prev[currentId].objects.map(o =>
+          o.id === objectId ? { ...o, fontSize } : o
+        ),
+      },
+    }))
   }, [currentId])
 
   const handleContextMenu = useCallback((worldX: number, worldY: number, screenX: number, screenY: number) => {
@@ -222,7 +254,11 @@ export default function App() {
         onGoBack={handleLeaveSpace}
         onUpdateObject={handleUpdateObject}
         onResizeObject={handleResizeObject}
+        onRenameObject={handleRenameObject}
+        onFontSizeChange={handleFontSizeChange}
         onContextMenu={handleContextMenu}
+        pendingEditId={pendingEditId}
+        onPendingEditClear={() => setPendingEditId(null)}
       />
 
       {/* Flash overlay for space transitions */}

@@ -103,8 +103,7 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
       label: 'Create',
       children: [
         { label: 'Space', action: () => {
-          const name = window.prompt('Space name:') || ''
-          onCreateObject('space', worldX, worldY, { name })
+          onCreateObject('space', worldX, worldY, {})
           fadeClose()
         } },
         { label: 'Note', action: () => { onCreateObject('note', worldX, worldY); fadeClose() } },

@@ -1,6 +1,9 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import type { CanvasObject as CanvasObjectType, SpaceObjectDef, NoteObject, FileObject, LinkObject, ShapeObject } from './types'
-import { shortId } from './types'
+import type {
+  CanvasObject as CanvasObjectType, SpaceObjectDef, NoteObject, FileObject, LinkObject, ShapeObject,
+  FontSize,
+} from './types'
+import { shortId, FONT_SIZE_MAP } from './types'
 
 interface Props {
   isDark: boolean
@@ -10,13 +13,20 @@ interface Props {
   onGoBack: () => void
   onUpdateObject: (objectId: string, x: number, y: number) => void
   onResizeObject?: (objectId: string, x: number, y: number, width: number, height: number) => void
+  onRenameObject?: (objectId: string, name: string) => void
+  onFontSizeChange?: (objectId: string, fontSize: FontSize) => void
   onContextMenu?: (worldX: number, worldY: number, screenX: number, screenY: number) => void
+  pendingEditId?: string | null
+  onPendingEditClear?: () => void
 }
 
 const MIN_ZOOM = 0.05
 const MAX_ZOOM = 5
 const HIT_RADIUS = 6 // screen px for edge detection
 const MIN_OBJ_SIZE = 60 // world px minimum
+const TOOLBAR_GAP = 12 // px above selected object
+
+const FONT_SIZES: FontSize[] = ['sm', 's', 'm', 'l', 'xl']
 
 const GRID_LEVELS = [
   { step: 1, minZoom: 32 }, { step: 2, minZoom: 16 },
@@ -61,7 +71,9 @@ function cursorForEdges(e: Edges): string {
 }
 
 export default function Canvas({
-  isDark, spaceId, objects, onEnterSpace, onGoBack, onUpdateObject, onResizeObject, onContextMenu: onCtx,
+  isDark, spaceId, objects, onEnterSpace, onGoBack, onUpdateObject,
+  onResizeObject, onRenameObject, onFontSizeChange, onContextMenu: onCtx,
+  pendingEditId, onPendingEditClear,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const vpRef = useRef({ x: 0, y: 0, zoom: 1 })
@@ -92,9 +104,20 @@ export default function Canvas({
   } | null>(null)
   const resizePreviewRef = useRef<{ id: string; x: number; y: number; w: number; h: number } | null>(null)
 
-  // Hover (for handles + cursor)
+  // Hover (for cursor)
   const [hoverCursor, setHoverCursor] = useState<string | null>(null)
   const hoverEdgesRef = useRef<{ objId: string; edges: Edges } | null>(null)
+
+  // Selection
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Forces re-render during drag/resize for toolbar position update
+  const [moveVersion, setMoveVersion] = useState(0)
+  const moveVerRef = useRef(0)
+
+  // Inline name editing
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
 
   // Zoom label
   const [zoomText, setZoomText] = useState('')
@@ -119,6 +142,23 @@ export default function Canvas({
       fadeAnim.current = requestAnimationFrame(step)
     }, 1000)
   }, [])
+
+  // ─── Handle pendingEditId (new space creation) ───
+  useEffect(() => {
+    if (pendingEditId) {
+      setSelectedId(pendingEditId)
+      setEditingId(pendingEditId)
+      setEditText('')
+      onPendingEditClear?.()
+    }
+  }, [pendingEditId, onPendingEditClear])
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (editingId && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }, [editingId])
 
   // ─── Draw ───
   const draw = useCallback(() => {
@@ -178,38 +218,47 @@ export default function Canvas({
       const sh = oh * vp.zoom
       if (sx + sw < 0 || sx > w || sy + sh < 0 || sy > h) continue
 
-      const label = obj.name || shortId(obj.id)
+      const label = editingId === obj.id ? '' : (obj.name || shortId(obj.id))
+      const fs: FontSize = obj.fontSize || 'm'
 
       switch (obj.type) {
         case 'space':
-          drawSpaceObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as SpaceObjectDef).targetSpaceId, label)
+          drawSpaceObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as SpaceObjectDef).targetSpaceId, label, fs)
           break
         case 'note':
-          drawNoteObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as NoteObject).content, label)
+          drawNoteObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as NoteObject).content, label, fs)
           break
         case 'file':
-          drawFileObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as FileObject).mime_type, label)
+          drawFileObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as FileObject).mime_type, label, fs)
           break
         case 'link':
-          drawLinkObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as LinkObject).url, label)
+          drawLinkObject(ctx, sx, sy, sw, sh, vp.zoom, dark, (obj as LinkObject).url, label, fs)
           break
         case 'shape': {
           const kind = (obj as ShapeObject).kind
-          drawShapeObject(ctx, sx, sy, sw, sh, vp.zoom, dark, kind, label)
+          drawShapeObject(ctx, sx, sy, sw, sh, vp.zoom, dark, kind, label, fs)
           break
         }
       }
 
-      // Draw resize handles on hovered or actively resizing object
-      const hovered = hoverEdgesRef.current
-      if (hovered && hovered.objId === obj.id) {
+      // Selection highlight + resize handles
+      const isSel = selectedId === obj.id
+      if (isSel && !editingId) {
+        ctx.strokeStyle = dark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.5)'
+        ctx.lineWidth = 2
+        ctx.setLineDash([4, 3])
+        drawRect(ctx, sx, sy, sw, sh, 0)
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+      if (isSel || (hoverEdgesRef.current && hoverEdgesRef.current.objId === obj.id)) {
         drawResizeHandles(ctx, sx, sy, sw, sh, vp.zoom, dark)
       }
       if (rez && rez.id === obj.id) {
         drawResizeHandles(ctx, sx, sy, sw, sh, vp.zoom, dark)
       }
     }
-  }, [isDark, objects])
+  }, [isDark, objects, selectedId, editingId])
 
   function drawGrid(ctx: CanvasRenderingContext2D, vp: any, w: number, h: number, dark: boolean, step: number, alphaMul: number) {
     if (alphaMul <= 0) return
@@ -232,7 +281,7 @@ export default function Canvas({
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
     _zoom: number, dark: boolean,
   ) {
-    const hs = 5 // handle half-size in screen px
+    const hs = 5
     const fill = dark ? '#ffffff' : '#000000'
     const stroke = dark ? '#000000' : '#ffffff'
     const points = [
@@ -262,7 +311,7 @@ export default function Canvas({
 
   function drawSpaceObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
-    zoom: number, dark: boolean, _targetId: string, label: string,
+    zoom: number, dark: boolean, _targetId: string, label: string, fs: FontSize,
   ) {
     ctx.strokeStyle = dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'
     ctx.fillStyle = dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'
@@ -271,9 +320,9 @@ export default function Canvas({
     ctx.fill()
     ctx.stroke()
 
-    // Centered name with fixed font size + word-wrap
+    // Centered name with font size + word-wrap
     if (sw > 40 && sh > 30 && label) {
-      const baseSize = 14 // world px, stable across zoom
+      const baseSize = FONT_SIZE_MAP[fs]
       const fontSize = baseSize * zoom
       const padX = 12 * zoom
       const maxW = sw - padX * 2
@@ -310,7 +359,7 @@ export default function Canvas({
 
   function drawNoteObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
-    zoom: number, dark: boolean, _content: string, label: string,
+    zoom: number, dark: boolean, _content: string, label: string, fs: FontSize,
   ) {
     const fill = dark ? 'rgba(255,255,220,0.08)' : 'rgba(255,255,200,0.25)'
     ctx.fillStyle = fill
@@ -337,7 +386,8 @@ export default function Canvas({
 
     if (sw > 30 && sh > 20) {
       ctx.fillStyle = dark ? 'rgba(255,255,220,0.5)' : 'rgba(80,80,50,0.7)'
-      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      const baseSize = FONT_SIZE_MAP[fs]
+      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
       ctx.textBaseline = 'top'
       ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
     }
@@ -345,7 +395,7 @@ export default function Canvas({
 
   function drawFileObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
-    zoom: number, dark: boolean, _mime: string | undefined, label: string,
+    zoom: number, dark: boolean, _mime: string | undefined, label: string, fs: FontSize,
   ) {
     const fill = dark ? 'rgba(200,220,255,0.06)' : 'rgba(200,220,255,0.2)'
     ctx.fillStyle = fill
@@ -368,7 +418,8 @@ export default function Canvas({
 
     if (sw > 30 && sh > 20) {
       ctx.fillStyle = dark ? 'rgba(200,220,255,0.5)' : 'rgba(60,80,120,0.7)'
-      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      const baseSize = FONT_SIZE_MAP[fs]
+      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
       ctx.textBaseline = 'top'
       ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
     }
@@ -376,7 +427,7 @@ export default function Canvas({
 
   function drawLinkObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
-    zoom: number, dark: boolean, _url: string, label: string,
+    zoom: number, dark: boolean, _url: string, label: string, fs: FontSize,
   ) {
     const fill = dark ? 'rgba(180,200,255,0.05)' : 'rgba(180,200,255,0.15)'
     ctx.fillStyle = fill
@@ -396,7 +447,8 @@ export default function Canvas({
       ctx.stroke()
 
       ctx.fillStyle = dark ? 'rgba(180,200,255,0.5)' : 'rgba(60,80,160,0.7)'
-      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      const baseSize = FONT_SIZE_MAP[fs]
+      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
       ctx.textBaseline = 'top'
       ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
     }
@@ -404,7 +456,7 @@ export default function Canvas({
 
   function drawShapeObject(
     ctx: CanvasRenderingContext2D, sx: number, sy: number, sw: number, sh: number,
-    zoom: number, dark: boolean, kind: string, label: string,
+    zoom: number, dark: boolean, kind: string, label: string, fs: FontSize,
   ) {
     ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'
     ctx.fillStyle = dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)'
@@ -425,7 +477,8 @@ export default function Canvas({
 
     if (sw > 30 && sh > 20) {
       ctx.fillStyle = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'
-      ctx.font = `${Math.max(9, 11 * zoom)}px system-ui, sans-serif`
+      const baseSize = FONT_SIZE_MAP[fs]
+      ctx.font = `${Math.max(9, baseSize * zoom)}px system-ui, sans-serif`
       ctx.textBaseline = 'top'
       ctx.fillText(label, sx + 6 * zoom, sy + 6 * zoom)
     }
@@ -504,7 +557,6 @@ export default function Canvas({
     if (edges.top) { ny = origY + dy; nh = origH - dy }
     if (edges.bottom) { nh = origH + dy }
 
-    // Enforce min size
     if (nw < MIN_OBJ_SIZE) {
       if (edges.left) nx = origX + origW - MIN_OBJ_SIZE
       nw = MIN_OBJ_SIZE
@@ -528,10 +580,12 @@ export default function Canvas({
     const wx = smx / vp.zoom + vp.x
     const wy = smy / vp.zoom + vp.y
 
-    // Check edge hit → resize
+    // Check edge hit → resize (select object too)
     for (const obj of objects) {
       const edges = detectEdges(smx, smy, obj, vp)
       if (edges) {
+        setSelectedId(obj.id)
+        setEditingId(null)
         resizeRef.current = {
           objId: obj.id,
           edges,
@@ -546,26 +600,33 @@ export default function Canvas({
       }
     }
 
-    // Check inside object → drag
+    // Check inside object → select + drag
     for (const obj of objects) {
       if (wx >= obj.x && wx <= obj.x + obj.width &&
           wy >= obj.y && wy <= obj.y + obj.height) {
-        dragRef.current = {
-          objId: obj.id,
-          offsetX: wx - obj.x,
-          offsetY: wy - obj.y,
-          origX: obj.x,
-          origY: obj.y,
+        // If clicking the already-selected object, allow drag
+        if (obj.id === selectedId) {
+          dragRef.current = {
+            objId: obj.id,
+            offsetX: wx - obj.x,
+            offsetY: wy - obj.y,
+            origX: obj.x,
+            origY: obj.y,
+          }
         }
+        setSelectedId(obj.id)
+        setEditingId(null)
         return
       }
     }
 
-    // Not on object → pan
+    // Not on object → deselect + pan
+    setSelectedId(null)
+    setEditingId(null)
     panning.current = true
     setIsPanning(true)
     panStart.current = { x: e.clientX, y: e.clientY, vx: vp.x, vy: vp.y }
-  }, [objects])
+  }, [objects, selectedId])
 
   const onMouseMove = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current
@@ -583,6 +644,8 @@ export default function Canvas({
       const res = computeResize(r.edges, r.origX, r.origY, r.origW, r.origH, dx, dy)
       resizePreviewRef.current = { id: r.objId, x: res.x, y: res.y, w: res.w, h: res.h }
       draw()
+      moveVerRef.current++
+      setMoveVersion(moveVerRef.current)
       return
     }
 
@@ -594,6 +657,8 @@ export default function Canvas({
       const newY = my + vp.y - dragRef.current.offsetY
       dragPosRef.current = { id: dragRef.current.objId, x: newX, y: newY }
       draw()
+      moveVerRef.current++
+      setMoveVersion(moveVerRef.current)
       return
     }
 
@@ -649,7 +714,7 @@ export default function Canvas({
     setIsPanning(false)
   }, [onUpdateObject, onResizeObject, draw])
 
-  // === Double-click → enter space or go back ===
+  // === Double-click → enter space ===
   const onDoubleClick = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -671,7 +736,16 @@ export default function Canvas({
     onGoBack()
   }, [objects, onEnterSpace, onGoBack])
 
-  // === Touch events ===
+  // ─── Inline edit commit ───
+  const commitEdit = useCallback(() => {
+    if (editingId && onRenameObject) {
+      onRenameObject(editingId, editText)
+    }
+    setEditingId(null)
+    setEditText('')
+  }, [editingId, editText, onRenameObject])
+
+  // ─── Touch events ───
   const touchRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length === 1) {
@@ -688,6 +762,75 @@ export default function Canvas({
     draw()
   }, [draw])
   const onTouchEnd = useCallback(() => { touchRef.current = null }, [])
+
+  // ─── Compute toolbar / edit input position ───
+  const selectedObj = selectedId ? objects.find(o => o.id === selectedId) : null
+  let toolStyle: React.CSSProperties | undefined
+  let editStyle: React.CSSProperties | undefined
+  // moveVersion forces re-render on drag/resize to update positions
+  void moveVersion
+  if (canvasRef.current && selectedObj) {
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const vp = vpRef.current
+    // Use drag preview position when dragging selected object
+    let effX = selectedObj.x, effY = selectedObj.y
+    const dragPos = dragPosRef.current
+    if (dragPos && dragPos.id === selectedId) {
+      effX = dragPos.x
+      effY = dragPos.y
+    }
+    const sx = (effX - vp.x) * vp.zoom + canvasRect.left
+    const sy = (effY - vp.y) * vp.zoom + canvasRect.top
+    const sw = selectedObj.width * vp.zoom
+    const bg = isDark ? '#2a2a2a' : '#f5f5f5'
+
+    // Toolbar: above object
+    if (!editingId) {
+      toolStyle = {
+        position: 'fixed' as const,
+        left: sx + sw / 2,
+        top: sy - TOOLBAR_GAP - 30,
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        gap: 0,
+        background: bg,
+        border: `1px solid ${isDark ? '#444' : '#ccc'}`,
+        borderRadius: 6,
+        padding: '2px',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+        zIndex: 1100,
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        fontSize: 11,
+        userSelect: 'none',
+      }
+    }
+
+    // Edit input: over object
+    if (editingId) {
+      const obj = objects.find(o => o.id === editingId)
+      const fs = FONT_SIZE_MAP[(obj?.fontSize || 'm')]
+      const inpSz = Math.max(14, fs) * vp.zoom
+      editStyle = {
+        position: 'fixed' as const,
+        left: sx + sw / 2,
+        top: sy + selectedObj.height * vp.zoom / 2 - inpSz / 2,
+        transform: 'translateX(-50%)',
+        width: Math.max(60, sw - 24 * vp.zoom),
+        maxWidth: Math.max(60, sw - 24 * vp.zoom),
+        background: 'transparent',
+        border: 'none',
+        outline: 'none',
+        color: isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)',
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: inpSz,
+        lineHeight: 1.3,
+        textAlign: 'center',
+        zIndex: 1100,
+        padding: 0,
+        margin: 0,
+      }
+    }
+  }
 
   // Determine cursor
   let cursorStyle = 'grab'
@@ -721,12 +864,90 @@ export default function Canvas({
           const vp = vpRef.current
           const wx = mx / vp.zoom + vp.x
           const wy = my / vp.zoom + vp.y
+          setSelectedId(null)
+          setEditingId(null)
           onCtx(wx, wy, e.clientX, e.clientY)
         }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       />
+
+      {/* Toolbar for selected object */}
+      {toolStyle && selectedObj && (
+        <div style={toolStyle}>
+          {FONT_SIZES.map(fs => {
+            const active = (selectedObj.fontSize || 'm') === fs
+            return (
+              <button
+                key={fs}
+                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+                onClick={() => {
+                  if (onFontSizeChange && selectedObj) {
+                    onFontSizeChange(selectedObj.id, fs)
+                  }
+                }}
+                style={{
+                  background: active ? (isDark ? '#555' : '#ddd') : 'transparent',
+                  border: 'none',
+                  borderRadius: 4,
+                  padding: '3px 6px',
+                  cursor: 'pointer',
+                  color: isDark ? '#ccc' : '#333',
+                  fontWeight: active ? 600 : 400,
+                  fontSize: 11,
+                  fontFamily: 'inherit',
+                }}
+              >
+                {fs}
+              </button>
+            )
+          })}
+          <div style={{ width: 1, background: isDark ? '#444' : '#ccc', margin: '2px 2px' }} />
+          <button
+            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+            onClick={() => {
+              setEditingId(selectedObj.id)
+              setEditText(selectedObj.name || '')
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 4,
+              padding: '3px 6px',
+              cursor: 'pointer',
+              color: isDark ? '#ccc' : '#333',
+              fontSize: 13,
+              fontFamily: 'inherit',
+            }}
+          >
+            ✏
+          </button>
+        </div>
+      )}
+
+      {/* Inline edit input */}
+      {editStyle && (
+        <input
+          ref={inputRef}
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') {
+              commitEdit()
+            }
+            if (e.key === 'Escape') {
+              setEditingId(null)
+              setEditText('')
+            }
+          }}
+          onBlur={commitEdit}
+          placeholder="Type name..."
+          style={editStyle}
+        />
+      )}
+
       <div
         style={{
           position: 'fixed',

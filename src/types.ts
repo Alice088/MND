@@ -13,6 +13,7 @@ export interface SpaceObjectDef {
   width: number
   height: number
   targetSpaceId: string
+  fontSize?: FontSize
 }
 
 export interface NoteObject {
@@ -24,6 +25,7 @@ export interface NoteObject {
   width: number
   height: number
   content: string
+  fontSize?: FontSize
 }
 
 export interface FileObject {
@@ -36,6 +38,7 @@ export interface FileObject {
   height: number
   storage_key?: string
   mime_type?: string
+  fontSize?: FontSize
 }
 
 export interface LinkObject {
@@ -47,6 +50,7 @@ export interface LinkObject {
   width: number
   height: number
   url: string
+  fontSize?: FontSize
 }
 
 export interface ShapeObject {
@@ -58,6 +62,17 @@ export interface ShapeObject {
   width: number
   height: number
   kind: 'rectangle' | 'circle'
+  fontSize?: FontSize
+}
+
+export type FontSize = 'sm' | 's' | 'm' | 'l' | 'xl'
+
+export const FONT_SIZE_MAP: Record<FontSize, number> = {
+  sm: 20,
+  s: 24,
+  m: 28,
+  l: 36,
+  xl: 48,
 }
 
 export type CanvasObject = SpaceObjectDef | NoteObject | FileObject | LinkObject | ShapeObject
