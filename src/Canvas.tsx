@@ -7,10 +7,8 @@ interface Props {
   spaceId: string
   objects: CanvasObjectType[]
   onEnterSpace: (targetId: string, obj: CanvasObjectType, currentVp: { x: number; y: number; zoom: number }) => void
-  enterAnim: { obj: CanvasObjectType } | null
-  onEnterComplete: (targetId: string) => void
-  exitAnim: { toViewport: { x: number; y: number; zoom: number } } | null
-  onExitComplete: () => void
+  onGoBack: () => void
+  onUpdateObject: (objectId: string, x: number, y: number) => void
   onContextMenu?: (worldX: number, worldY: number, screenX: number, screenY: number) => void
 }
 
@@ -33,22 +31,24 @@ function getGridIdx(z: number) {
   return 0
 }
 
-function lerp(a: number, b: number, t: number) { return a + (b - a) * t }
-
-function easeInOutCubic(t: number) {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-}
-
 export default function Canvas({
-  isDark, spaceId, objects, onEnterSpace,
-  enterAnim, onEnterComplete, exitAnim, onExitComplete, onContextMenu: onCtx,
+  isDark, spaceId, objects, onEnterSpace, onGoBack, onUpdateObject, onContextMenu: onCtx,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const vpRef = useRef({ x: 0, y: 0, zoom: 1 })
   const panning = useRef(false)
   const panStart = useRef({ x: 0, y: 0, vx: 0, vy: 0 })
   const [isPanning, setIsPanning] = useState(false)
-  const animRef = useRef(0)
+
+  // Drag state
+  const dragRef = useRef<{
+    objId: string
+    offsetX: number
+    offsetY: number
+    origX: number
+    origY: number
+  } | null>(null)
+  const dragPosRef = useRef<{ id: string; x: number; y: number } | null>(null)
 
   // Zoom label
   const [zoomText, setZoomText] = useState('')
@@ -73,88 +73,81 @@ export default function Canvas({
     }, 1000)
   }, [])
 
-  useEffect(() => () => { cancelAnimationFrame(fadeAnim.current); clearTimeout(fadeTimer.current) }, [])
-
-  // === Drawing ===
-
   const draw = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-
-    const { width: w, height: h } = canvas.getBoundingClientRect()
-    const dpr = window.devicePixelRatio || 1
-
-    if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
-      canvas.width = Math.floor(w * dpr)
-      canvas.height = Math.floor(h * dpr)
+    const rect = canvas.getBoundingClientRect()
+    const w = rect.width, h = rect.height
+    if (canvas.width !== Math.round(w * devicePixelRatio) ||
+        canvas.height !== Math.round(h * devicePixelRatio)) {
+      canvas.width = Math.round(w * devicePixelRatio)
+      canvas.height = Math.round(h * devicePixelRatio)
+      ctx.scale(devicePixelRatio, devicePixelRatio)
     }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const vp = vpRef.current
+    const dark = isDark
 
-    ctx.fillStyle = isDark ? '#121212' : '#ffffff'
+    // Background
+    ctx.fillStyle = dark ? '#000000' : '#ffffff'
     ctx.fillRect(0, 0, w, h)
 
     // Grid
-    const idx = getGridIdx(vp.zoom)
-    const cur = GRID_LEVELS[idx]
-    let blend = 0
-    let next = cur
-    if (idx < GRID_LEVELS.length - 1) {
-      next = GRID_LEVELS[idx + 1]
-      const lo = next.minZoom
-      const hi = cur.minZoom
-      if (hi !== lo) blend = 1 - (vp.zoom - lo) / (hi - lo)
+    const gIdx = getGridIdx(vp.zoom)
+    const l1 = GRID_LEVELS[gIdx]
+    const l2 = GRID_LEVELS[Math.min(gIdx + 1, GRID_LEVELS.length - 1)]
+    const zRange = l1.minZoom - (l2?.minZoom ?? 0)
+    const zPos = zRange > 0 ? (vp.zoom - l2.minZoom) / zRange : 1
+    const blendA = Math.max(0, Math.min(1, zPos))
+    const blendB = 1 - blendA
+    drawGrid(ctx, vp, w, h, dark, l1.step, blendA)
+    drawGrid(ctx, vp, w, h, dark, l2.step, blendB)
+
+    // Crosshair
+    const cx = -vp.x * vp.zoom, cy = -vp.y * vp.zoom
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(0, cy); ctx.lineTo(w, cy)
+    ctx.moveTo(cx, 0); ctx.lineTo(cx, h)
+    ctx.stroke()
+
+    // Draw space objects
+    for (const obj of objects) {
+      if (obj.type !== 'space') continue
+      let ox = obj.x, oy = obj.y
+      const drag = dragPosRef.current
+      if (drag && drag.id === obj.id) { ox = drag.x; oy = drag.y }
+      const sx = (ox - vp.x) * vp.zoom
+      const sy = (oy - vp.y) * vp.zoom
+      const sw = obj.width * vp.zoom
+      const sh = obj.height * vp.zoom
+      if (sx + sw < 0 || sx > w || sy + sh < 0 || sy > h) continue
+
+      // Rect
+      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'
+      ctx.fillStyle = dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      if (ctx.roundRect) {
+        ctx.roundRect(sx, sy, sw, sh, 3 * vp.zoom)
+      } else {
+        ctx.rect(sx, sy, sw, sh)
+      }
+      ctx.fill()
+      ctx.stroke()
+
+      // Name label
+      if (sw > 40 && sh > 20) {
+        ctx.fillStyle = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'
+        ctx.font = `${Math.max(10, 12 * vp.zoom)}px system-ui, sans-serif`
+        ctx.textBaseline = 'top'
+        ctx.fillText(shortId(obj.targetSpaceId!), sx + 8 * vp.zoom, sy + 8 * vp.zoom)
+      }
     }
-    drawGrid(ctx, vp, w, h, isDark, cur.step, 1 - blend)
-    if (idx < GRID_LEVELS.length - 1) drawGrid(ctx, vp, w, h, isDark, next.step, blend)
-
-    // Origin crosshair
-    ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'
-    ctx.lineWidth = 1
-    const ox = -vp.x * vp.zoom
-    const oy = -vp.y * vp.zoom
-    ctx.beginPath()
-    ctx.moveTo(ox - 8, oy); ctx.lineTo(ox + 8, oy)
-    ctx.moveTo(ox, oy - 8); ctx.lineTo(ox, oy + 8)
-    ctx.stroke()
-
-    // Objects
-    for (const obj of objects) drawObject(ctx, vp, obj, isDark)
   }, [isDark, objects])
-
-  function drawObject(ctx: CanvasRenderingContext2D, vp: typeof vpRef.current, obj: CanvasObjectType, dark: boolean) {
-    const sx = (obj.x - vp.x) * vp.zoom
-    const sy = (obj.y - vp.y) * vp.zoom
-    const sw = obj.width * vp.zoom
-    const sh = obj.height * vp.zoom
-
-    const dpr = window.devicePixelRatio || 1
-    const cw = ctx.canvas.width / dpr
-    const ch = ctx.canvas.height / dpr
-    if (sx + sw < -10 || sx > cw + 10 || sy + sh < -10 || sy > ch + 10) return
-
-    const border = dark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)'
-    const fill = dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)'
-    const textCol = dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'
-
-    ctx.strokeStyle = border
-    ctx.lineWidth = 1
-    ctx.fillStyle = fill
-    const r = 6 * vp.zoom
-    ctx.beginPath()
-    ctx.roundRect(sx, sy, sw, sh, r)
-    ctx.fill()
-    ctx.stroke()
-
-    const fs = Math.max(9, 12 * vp.zoom)
-    ctx.font = `${fs}px system-ui, -apple-system, sans-serif`
-    ctx.fillStyle = textCol
-    ctx.textBaseline = 'top'
-    ctx.fillText(shortId(obj.targetSpaceId), sx + 8 * vp.zoom, sy + 8 * vp.zoom)
-  }
 
   function drawGrid(ctx: CanvasRenderingContext2D, vp: any, w: number, h: number, dark: boolean, step: number, alphaMul: number) {
     if (alphaMul <= 0) return
@@ -203,112 +196,26 @@ export default function Canvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // === Enter animation: zoom into object with smooth 3D-like transition ===
-  useEffect(() => {
-    if (!enterAnim || !canvasRef.current) return
-    const canvas = canvasRef.current
-    const rect = canvas.getBoundingClientRect()
-    const cw = rect.width, ch = rect.height
-
-    const obj = enterAnim.obj
-    const from = { x: vpRef.current.x, y: vpRef.current.y, zoom: vpRef.current.zoom }
-
-    // Target: center on object, zoom so object fills ~80% of viewport
-    const targetZoom = Math.min(cw / obj.width, ch / obj.height) * 0.8
-    const clampedZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, targetZoom))
-
-    // Object center in world coords
-    const objCx = obj.x + obj.width / 2
-    const objCy = obj.y + obj.height / 2
-
-    const to = {
-      x: objCx - cw / (2 * clampedZoom),
-      y: objCy - ch / (2 * clampedZoom),
-      zoom: clampedZoom,
-    }
-
-    const duration = 400
-    const start = performance.now()
-
-    cancelAnimationFrame(animRef.current)
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / duration, 1)
-      const e = easeInOutCubic(t)
-      vpRef.current.x = lerp(from.x, to.x, e)
-      vpRef.current.y = lerp(from.y, to.y, e)
-      vpRef.current.zoom = lerp(from.zoom, to.zoom, e)
-      draw()
-      if (t < 1) {
-        animRef.current = requestAnimationFrame(tick)
-      } else {
-        // Reset viewport for new space (centered on origin)
-        const cvs = canvasRef.current
-        if (cvs) {
-          const r = cvs.getBoundingClientRect()
-          vpRef.current.x = -r.width / 2
-          vpRef.current.y = -r.height / 2
-          vpRef.current.zoom = 1
-          draw()
-        }
-        onEnterComplete(obj.targetSpaceId)
-      }
-    }
-    animRef.current = requestAnimationFrame(tick)
-
-    return () => cancelAnimationFrame(animRef.current)
-  }, [enterAnim, draw, onEnterComplete])
-
-  // === Exit animation: zoom out to parent viewport ===
-  useEffect(() => {
-    if (!exitAnim || !canvasRef.current) return
-    const from = { x: vpRef.current.x, y: vpRef.current.y, zoom: vpRef.current.zoom }
-    const to = exitAnim.toViewport
-
-    const duration = 350
-    const start = performance.now()
-
-    cancelAnimationFrame(animRef.current)
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / duration, 1)
-      const e = easeInOutCubic(t)
-      vpRef.current.x = lerp(from.x, to.x, e)
-      vpRef.current.y = lerp(from.y, to.y, e)
-      vpRef.current.zoom = lerp(from.zoom, to.zoom, e)
-      draw()
-      if (t < 1) {
-        animRef.current = requestAnimationFrame(tick)
-      } else {
-        onExitComplete()
-      }
-    }
-    animRef.current = requestAnimationFrame(tick)
-
-    return () => cancelAnimationFrame(animRef.current)
-  }, [exitAnim, draw, onExitComplete])
-
-  // === Events ===
-
+  // === Wheel zoom (center-based) ===
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
+    const vp = vpRef.current
+    const delta = -e.deltaY * 0.001
+    const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, vp.zoom * (1 + delta)))
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
-    const cx = rect.width / 2
-    const cy = rect.height / 2
-    const vp = vpRef.current
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, vp.zoom * factor))
-    if (newZoom !== vp.zoom) {
-      const wx = cx / vp.zoom + vp.x
-      const wy = cy / vp.zoom + vp.y
-      vp.x = wx - cx / newZoom
-      vp.y = wy - cy / newZoom
-      vp.zoom = newZoom
-      showZoomLabel(`${Math.round(newZoom * 100)}%`)
-      draw()
-    }
+    const cx = rect.width / 2, cy = rect.height / 2
+    const wx = cx / vp.zoom + vp.x
+    const wy = cy / vp.zoom + vp.y
+    vp.x = wx - cx / newZoom
+    vp.y = wy - cy / newZoom
+    vp.zoom = newZoom
+    draw()
+    showZoomLabel(`${Math.round(newZoom * 100)}%`)
   }, [draw, showZoomLabel])
 
+  // === Mouse pan (left-click) + object drag ===
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
     const canvas = canvasRef.current
@@ -320,7 +227,77 @@ export default function Canvas({
     const wx = mx / vp.zoom + vp.x
     const wy = my / vp.zoom + vp.y
 
-    // Check click on space objects
+    // Check click on space object → start drag
+    for (const obj of objects) {
+      if (obj.type === 'space' &&
+          wx >= obj.x && wx <= obj.x + obj.width &&
+          wy >= obj.y && wy <= obj.y + obj.height) {
+        dragRef.current = {
+          objId: obj.id,
+          offsetX: wx - obj.x,
+          offsetY: wy - obj.y,
+          origX: obj.x,
+          origY: obj.y,
+        }
+        return
+      }
+    }
+
+    // Not on object → start panning
+    panning.current = true
+    setIsPanning(true)
+    panStart.current = { x: e.clientX, y: e.clientY, vx: vp.x, vy: vp.y }
+  }, [objects])
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    // Dragging object
+    if (dragRef.current) {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      const vp = vpRef.current
+      const mx = (e.clientX - rect.left) / vp.zoom
+      const my = (e.clientY - rect.top) / vp.zoom
+      const newX = mx + vp.x - dragRef.current.offsetX
+      const newY = my + vp.y - dragRef.current.offsetY
+      dragPosRef.current = { id: dragRef.current.objId, x: newX, y: newY }
+      draw()
+      return
+    }
+    // Panning
+    if (!panning.current) return
+    const vp = vpRef.current
+    vp.x = panStart.current.vx - (e.clientX - panStart.current.x) / vp.zoom
+    vp.y = panStart.current.vy - (e.clientY - panStart.current.y) / vp.zoom
+    draw()
+  }, [draw])
+
+  const onMouseUp = useCallback(() => {
+    if (dragRef.current) {
+      const pos = dragPosRef.current
+      if (pos) {
+        onUpdateObject(pos.id, pos.x, pos.y)
+      }
+      dragRef.current = null
+      dragPosRef.current = null
+      return
+    }
+    panning.current = false
+    setIsPanning(false)
+  }, [onUpdateObject])
+
+  // === Double-click → enter space or go back ===
+  const onDoubleClick = useCallback((e: React.MouseEvent) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const mx = e.clientX - rect.left
+    const my = e.clientY - rect.top
+    const vp = vpRef.current
+    const wx = mx / vp.zoom + vp.x
+    const wy = my / vp.zoom + vp.y
+
+    // Check on space object → enter
     for (const obj of objects) {
       if (obj.type === 'space' &&
           wx >= obj.x && wx <= obj.x + obj.width &&
@@ -329,22 +306,11 @@ export default function Canvas({
         return
       }
     }
+    // Empty space → go back
+    onGoBack()
+  }, [objects, onEnterSpace, onGoBack])
 
-    panning.current = true
-    setIsPanning(true)
-    panStart.current = { x: e.clientX, y: e.clientY, vx: vp.x, vy: vp.y }
-  }, [objects, onEnterSpace])
-
-  const onMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!panning.current) return
-    const vp = vpRef.current
-    vp.x = panStart.current.vx - (e.clientX - panStart.current.x) / vp.zoom
-    vp.y = panStart.current.vy - (e.clientY - panStart.current.y) / vp.zoom
-    draw()
-  }, [draw])
-
-  const onMouseUp = useCallback(() => { panning.current = false; setIsPanning(false) }, [])
-
+  // === Touch events ===
   const touchRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length === 1) {
@@ -378,6 +344,7 @@ export default function Canvas({
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
+        onDoubleClick={onDoubleClick}
         onContextMenu={(e) => {
           if (!onCtx) return
           e.preventDefault()

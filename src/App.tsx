@@ -54,13 +54,24 @@ export default function App() {
     worldY: number
   } | null>(null)
 
-  const [enterAnim, setEnterAnim] = useState<{ obj: CanvasObject } | null>(null)
-  const [exitAnim, setExitAnim] = useState<{
-    toViewport: { x: number; y: number; zoom: number }
-  } | null>(null)
+  // Flash transition state
+  const [flashVisible, setFlashVisible] = useState(false)
 
   const currentSpace = spaces[currentId]
   const isRoot = currentId === ROOT_ID
+
+  // Helper: flash transition with space switch
+  const flashTransition = useCallback((doSwitch: () => void) => {
+    setFlashVisible(true)
+    // After CSS transition (0→1 over 150ms), switch space mid-flash
+    setTimeout(() => {
+      doSwitch()
+      // Next frame: start fade-out
+      requestAnimationFrame(() => {
+        setFlashVisible(false)
+      })
+    }, 180)
+  }, [])
 
   // Enter space
   const handleEnterSpace = useCallback((
@@ -68,36 +79,43 @@ export default function App() {
     obj: CanvasObject,
     currentVp: { x: number; y: number; zoom: number },
   ) => {
-    setNavStack(prev => [...prev, { spaceId: currentId, viewport: currentVp }])
-    setEnterAnim({ obj })
-  }, [currentId])
+    const targetId = obj.targetSpaceId
+    flashTransition(() => {
+      setNavStack(prev => [...prev, { spaceId: currentId, viewport: currentVp }])
+      setCurrentId(targetId)
+    })
+  }, [currentId, flashTransition])
 
-  const completeEnter = useCallback((targetId: string) => {
-    setCurrentId(targetId)
-    setEnterAnim(null)
-  }, [])
-
-  // Leave space
+  // Exit space (via back button or double-click on empty)
   const handleLeaveSpace = useCallback(() => {
     if (navStack.length === 0) return
     const prev = navStack[navStack.length - 1]
-    setExitAnim({ toViewport: prev.viewport })
-  }, [navStack])
-
-  const completeExit = useCallback(() => {
-    setNavStack(prev => {
-      if (prev.length === 0) return prev
-      const entry = prev[prev.length - 1]
-      setCurrentId(entry.spaceId)
-      return prev.slice(0, -1)
+    flashTransition(() => {
+      setCurrentId(prev.spaceId)
+      setNavStack(stack => stack.slice(0, -1))
     })
-    setExitAnim(null)
-  }, [])
+  }, [navStack, flashTransition])
 
+  // Reset to root
   const handleResetView = useCallback(() => {
-    setNavStack([])
-    setCurrentId(ROOT_ID)
-  }, [])
+    flashTransition(() => {
+      setNavStack([])
+      setCurrentId(ROOT_ID)
+    })
+  }, [flashTransition])
+
+  // Update object position (after drag)
+  const handleUpdateObject = useCallback((objectId: string, x: number, y: number) => {
+    setSpaces(prev => ({
+      ...prev,
+      [currentId]: {
+        ...prev[currentId],
+        objects: prev[currentId].objects.map(o =>
+          o.id === objectId ? { ...o, x, y } : o
+        ),
+      },
+    }))
+  }, [currentId])
 
   // Create child space
   const createChildSpace = useCallback((worldX: number, worldY: number) => {
@@ -131,15 +149,24 @@ export default function App() {
   return (
     <div className={`mnd ${isDark ? 'mnd--dark' : 'mnd--light'}`}>
       <Canvas
+        key={currentId}
         isDark={isDark}
         spaceId={currentId}
         objects={currentSpace.objects}
         onEnterSpace={handleEnterSpace}
-        enterAnim={enterAnim}
-        onEnterComplete={completeEnter}
-        exitAnim={exitAnim}
-        onExitComplete={completeExit}
+        onGoBack={handleLeaveSpace}
+        onUpdateObject={handleUpdateObject}
         onContextMenu={handleContextMenu}
+      />
+
+      {/* Flash overlay for space transitions */}
+      <div
+        className="flash-overlay"
+        style={{
+          background: isDark ? '#000000' : '#ffffff',
+          opacity: flashVisible ? 1 : 0,
+          pointerEvents: flashVisible ? 'auto' : 'none',
+        }}
       />
 
       {contextMenu && (
