@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import type { Space, CanvasObject, NoteObject, FileObject, LinkObject, ShapeObject } from './types'
-import { createId, shortId } from './types'
+import { createId } from './types'
 import Canvas from './Canvas'
 import ContextMenu from './ContextMenu'
 import './App.css'
@@ -13,7 +13,7 @@ interface NavEntry {
 function createSpace(id: string, parentId: string | null): Space {
   return {
     id,
-    name: shortId(id),
+    name: '',
     parentId,
     viewport: { x: 0, y: 0, zoom: 1 },
     objects: [],
@@ -22,6 +22,7 @@ function createSpace(id: string, parentId: string | null): Space {
 
 const ROOT_ID = createId()
 const root = createSpace(ROOT_ID, null)
+root.name = 'root'
 root.viewport = { x: -960, y: -540, zoom: 1 }
 
 const DEMO_ID = createId()
@@ -31,7 +32,7 @@ demo.viewport = { x: -960, y: -540, zoom: 1 }
 root.objects.push({
   id: createId(),
   type: 'space',
-  name: shortId(DEMO_ID),
+  name: 'unnamed space',
   x: -200,
   y: -100,
   width: 400,
@@ -62,6 +63,12 @@ export default function App() {
 
   const currentSpace = spaces[currentId]
   const isRoot = currentId === ROOT_ID
+
+  // Build breadcrumb path from navStack + current
+  const path = [
+    ...navStack.map(e => ({ id: e.spaceId, name: spaces[e.spaceId]?.name || '' })),
+    { id: currentId, name: currentSpace?.name || '' },
+  ]
 
   // Helper: flash transition with space switch
   const flashTransition = useCallback((doSwitch: () => void) => {
@@ -158,12 +165,13 @@ export default function App() {
         case 'space': {
           const spaceId = createId()
           obj = {
-            id, type: 'space', name: '',
+            id, type: 'space', name: 'unnamed space',
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
             targetSpaceId: spaceId,
           } as CanvasObject
           const newSpace: Space = createSpace(spaceId, currentId)
+          newSpace.name = 'unnamed space'
           return {
             ...prev,
             [spaceId]: newSpace,
@@ -214,15 +222,27 @@ export default function App() {
   }, [currentId])
 
   const handleRenameObject = useCallback((objectId: string, name: string) => {
-    setSpaces(prev => ({
-      ...prev,
-      [currentId]: {
-        ...prev[currentId],
-        objects: prev[currentId].objects.map(o =>
-          o.id === objectId ? { ...o, name } : o
-        ),
-      },
-    }))
+    setSpaces(prev => {
+      const space = prev[currentId]
+      const obj = space.objects.find(o => o.id === objectId)
+      let extra: Record<string, Space> = {}
+      if (obj?.type === 'space') {
+        const targetId = (obj as any).targetSpaceId
+        if (prev[targetId]) {
+          extra[targetId] = { ...prev[targetId], name }
+        }
+      }
+      return {
+        ...prev,
+        ...extra,
+        [currentId]: {
+          ...space,
+          objects: space.objects.map(o =>
+            o.id === objectId ? { ...o, name } : o
+          ),
+        },
+      }
+    })
   }, [currentId])
 
   const handleFontSizeChange = useCallback((objectId: string, fontSize: import('./types').FontSize) => {
@@ -249,6 +269,7 @@ export default function App() {
         key={currentId}
         isDark={isDark}
         spaceId={currentId}
+        path={path}
         objects={currentSpace.objects}
         onEnterSpace={handleEnterSpace}
         onGoBack={handleLeaveSpace}

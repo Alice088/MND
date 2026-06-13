@@ -3,11 +3,12 @@ import type {
   CanvasObject as CanvasObjectType, SpaceObjectDef, NoteObject, FileObject, LinkObject, ShapeObject,
   FontSize,
 } from './types'
-import { shortId, FONT_SIZE_MAP } from './types'
+import { FONT_SIZE_MAP } from './types'
 
 interface Props {
   isDark: boolean
   spaceId: string
+  path: { id: string; name: string }[]
   objects: CanvasObjectType[]
   onEnterSpace: (targetId: string, obj: CanvasObjectType, currentVp: { x: number; y: number; zoom: number }) => void
   onGoBack: () => void
@@ -71,7 +72,7 @@ function cursorForEdges(e: Edges): string {
 }
 
 export default function Canvas({
-  isDark, spaceId, objects, onEnterSpace, onGoBack, onUpdateObject,
+  isDark, path, objects, onEnterSpace, onGoBack, onUpdateObject,
   onResizeObject, onRenameObject, onFontSizeChange, onContextMenu: onCtx,
   pendingEditId, onPendingEditClear,
 }: Props) {
@@ -122,7 +123,6 @@ export default function Canvas({
   // Zoom label
   const [zoomText, setZoomText] = useState('')
   const [labelOpacity, setLabelOpacity] = useState(0)
-  const [uuidOpacity, setUuidOpacity] = useState(0)
   const fadeTimer = useRef(0)
   const fadeAnim = useRef(0)
 
@@ -218,7 +218,7 @@ export default function Canvas({
       const sh = oh * vp.zoom
       if (sx + sw < 0 || sx > w || sy + sh < 0 || sy > h) continue
 
-      const label = editingId === obj.id ? '' : (obj.name || shortId(obj.id))
+      const label = editingId === obj.id ? '' : obj.name
       const fs: FontSize = obj.fontSize || 'm'
 
       switch (obj.type) {
@@ -512,20 +512,32 @@ export default function Canvas({
       vpRef.current.zoom = 1
       draw()
     }
-    setUuidOpacity(0.5)
     const t = setTimeout(() => {
       let op = 0.5
       const step = () => {
-        op -= 0.005
-        if (op <= 0) { setUuidOpacity(0); return }
-        setUuidOpacity(op)
-        requestAnimationFrame(step)
+        op -= 0.006
+        if (op <= 0) { setLabelOpacity(0); return }
+        setLabelOpacity(op)
+        fadeAnim.current = requestAnimationFrame(step)
       }
-      requestAnimationFrame(step)
-    }, 2000)
-    return () => clearTimeout(t)
+      fadeAnim.current = requestAnimationFrame(step)
+    }, 1000)
+    return () => { clearTimeout(t); cancelAnimationFrame(fadeAnim.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Keyboard: Escape → go back
+  useEffect(() => {
+    if (path.length <= 1) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !editingId) {
+        e.preventDefault()
+        onGoBack()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [path, editingId, onGoBack])
 
   // === Wheel zoom ===
   const onWheel = useCallback((e: React.WheelEvent) => {
@@ -899,7 +911,7 @@ export default function Canvas({
                   fontFamily: 'inherit',
                 }}
               >
-                {fs}
+                {fs.toUpperCase()}
               </button>
             )
           })}
@@ -954,17 +966,24 @@ export default function Canvas({
           top: 14,
           left: 14,
           fontFamily: 'system-ui, -apple-system, sans-serif',
-          fontSize: 10,
-          letterSpacing: '0.5px',
+          fontSize: 11,
+          letterSpacing: '0.3px',
           color: labelColor,
           pointerEvents: 'none',
           userSelect: 'none',
           zIndex: 1000,
-          fontVariantNumeric: 'tabular-nums',
-          opacity: uuidOpacity,
         }}
       >
-        {shortId(spaceId)}
+        {path.length === 1 ? (
+          <span>{path[0].name || '─'}</span>
+        ) : (
+          path.map((p, i) => (
+            <span key={p.id}>
+              <span style={{ opacity: i === path.length - 1 ? 0.9 : 0.45 }}>{p.name || '─'}</span>
+              {i < path.length - 1 && <span style={{ opacity: 0.3, margin: '0 5px' }}>/</span>}
+            </span>
+          ))
+        )}
       </div>
       <div
         style={{
