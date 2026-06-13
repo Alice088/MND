@@ -116,6 +116,19 @@ export default function App() {
     }))
   }, [currentId])
 
+  // Resize object
+  const handleResizeObject = useCallback((objectId: string, x: number, y: number, width: number, height: number) => {
+    setSpaces(prev => ({
+      ...prev,
+      [currentId]: {
+        ...prev[currentId],
+        objects: prev[currentId].objects.map(o =>
+          o.id === objectId ? { ...o, x, y, width, height } : o
+        ),
+      },
+    }))
+  }, [currentId])
+
   // Create object (from context menu)
   const handleCreateObject = useCallback((
     type: 'space' | 'note' | 'file' | 'link' | 'shape',
@@ -140,8 +153,9 @@ export default function App() {
       switch (type) {
         case 'space': {
           const spaceId = createId()
+          const objName = (extra?.name as string) || shortId(spaceId)
           obj = {
-            id, type: 'space', name: shortId(spaceId),
+            id, type: 'space', name: objName,
             x: worldX - defSize.w / 2, y: worldY - defSize.h / 2,
             width: defSize.w, height: defSize.h,
             targetSpaceId: spaceId,
@@ -207,6 +221,7 @@ export default function App() {
         onEnterSpace={handleEnterSpace}
         onGoBack={handleLeaveSpace}
         onUpdateObject={handleUpdateObject}
+        onResizeObject={handleResizeObject}
         onContextMenu={handleContextMenu}
       />
 

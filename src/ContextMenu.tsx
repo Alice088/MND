@@ -102,7 +102,11 @@ export default function ContextMenu({ x, y, worldX, worldY, onCreateObject, onCl
     {
       label: 'Create',
       children: [
-        { label: 'Space', action: () => { onCreateObject('space', worldX, worldY); fadeClose() } },
+        { label: 'Space', action: () => {
+          const name = window.prompt('Space name:') || ''
+          onCreateObject('space', worldX, worldY, { name })
+          fadeClose()
+        } },
         { label: 'Note', action: () => { onCreateObject('note', worldX, worldY); fadeClose() } },
         { label: 'File', action: () => { onCreateObject('file', worldX, worldY); fadeClose() } },
         { label: 'Link', action: () => { onCreateObject('link', worldX, worldY); fadeClose() } },
